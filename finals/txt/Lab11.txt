@@ -1,0 +1,271 @@
+#include <Arduino.h>
+
+struct hc595{uint8_t data;  uint8_t latch; uint8_t clock;};
+
+hc595 sf[]= {{4,0,2}, {27,25,32},{5,17,16}};
+
+bool states[] = {1,1,1};
+
+void whileDelay(bool condition, int delay){
+  if (condition){
+    vTaskDelay(delay / portTICK_PERIOD_MS);
+  }
+}
+
+void sfClock(hc595 sf){
+  digitalWrite(sf.clock, HIGH);
+  vTaskDelay(1 / portTICK_PERIOD_MS);
+  digitalWrite(sf.clock, LOW);
+}
+
+void sfLatch(hc595 sf){
+  digitalWrite(sf.latch, HIGH);
+  vTaskDelay(1 / portTICK_PERIOD_MS);
+  digitalWrite(sf.latch, LOW);
+}
+
+void sfShift(hc595 sf,int shifts,bool on){
+  for (int i = 0; i < shifts; i++)  {
+    if (on){
+    digitalWrite(sf.data, HIGH);
+    } else {
+    digitalWrite(sf.data, LOW);
+    }
+    sfClock(sf);
+  }
+  digitalWrite(sf.data, LOW);
+  sfLatch(sf);
+}
+
+void clock(hc595 sf,int shifts, bool on){
+  for (int i = 0; i < shifts; i++)  {
+    if (on){
+    digitalWrite(sf.data, HIGH);
+    } else {
+    digitalWrite(sf.data, LOW);
+    }
+    sfClock(sf);
+  }
+}
+
+void zero(hc595 sf){
+  clock(sf, 1, 0);
+  clock(sf, 6, 1); 
+  sfLatch(sf);
+}
+
+void one(hc595 sf){
+  clock(sf, 4, 0);
+  clock(sf, 2, 1);
+  clock(sf, 1, 0);
+  sfLatch(sf);
+}
+
+void two(hc595 sf){
+  clock(sf, 1, 1);
+  clock(sf, 1, 0);
+  clock(sf, 2, 1);
+  clock(sf, 1, 0);
+  clock(sf, 2, 1);
+  sfLatch(sf);
+}
+
+void three(hc595 sf){
+  clock(sf, 1, 1);  
+  clock(sf, 2, 0);
+  clock(sf, 4, 1);
+  sfLatch(sf);
+}
+
+void four(hc595 sf){
+  clock(sf, 2, 1);
+  clock(sf, 2, 0);
+  clock(sf, 2, 1);
+  clock(sf, 1, 0);
+  sfLatch(sf);
+}
+
+void five(hc595 sf){
+  clock(sf, 2, 1);
+  clock(sf, 1, 0);
+  clock(sf, 2, 1);
+  clock(sf, 1, 0);
+  clock(sf, 1, 1);
+  sfLatch(sf);
+}
+
+void six(hc595 sf){
+  clock(sf, 5, 1);
+  clock(sf, 1, 0);
+  clock(sf, 1, 1);
+  sfLatch(sf);
+}
+
+void seven(hc595 sf){
+  clock(sf, 4, 1);
+  clock(sf, 3, 0);
+  sfLatch(sf);
+}
+
+void eight(hc595 sf){
+  clock(sf, 7, 1);
+  sfLatch(sf);
+}
+
+void eight(hc595 sf){
+  clock(sf, 2, 1);
+  clock(sf, 1, 0);
+  clock(sf, 4, 1);
+  sfLatch(sf);
+}
+
+void sfClear(hc595 sf){
+  digitalWrite(sf.data, LOW);
+  for (int i = 0; i < 8; i++)  {
+    sfClock(sf);
+  }
+  sfLatch(sf);
+}
+
+void LeftToRight(void *param){
+  bool clear=false;
+  while(1){
+    if (!clear){
+      clear = true; 
+      sfClear(sf[1]);
+    }
+    while(states[1]){
+    if (clear){
+      clear = false;
+    }
+      sfShift(sf[1],1,true);
+      whileDelay(states[1], 250);
+      sfShift(sf[1],1,true);
+      whileDelay(states[1], 250);
+      for (int i = 0; i < 6;i++){
+      sfShift(sf[1],1,false);
+      whileDelay(states[1], 250);
+    }
+    }
+  }
+}
+
+void RightToLeft(void *param){
+  bool clear=false;
+  while(1){
+    if (!clear){
+      clear = true; 
+      sfClear(sf[2]);
+    }
+    while(states[2]){
+    if (clear){
+      clear = false;
+    }
+      sfShift(sf[2],1,true);
+      whileDelay(states[2], 250);
+      sfShift(sf[2],1,true);
+      whileDelay(states[2], 250);
+      for (int i = 0; i < 6;i++){
+      sfShift(sf[2],1,false);
+      whileDelay(states[2], 250);
+    }
+    }
+  }
+}
+
+void OddEven(void *param){
+  bool clear=false;
+  while (1){
+      if (!clear){
+        clear = true; 
+        sfClear(sf[0]);
+      }
+    while (states[0]){
+      if (clear){
+        clear = false;
+      }
+      for (int i = 0; i< 4; i++){
+        sfShift(sf[0],1,true);
+        sfShift(sf[0],1,false);
+      }
+      for (int i = 0; i < 8; i++){
+        sfShift(sf[0],1,true);
+        whileDelay(states[0], 500);
+        sfShift(sf[0],1,false);
+        whileDelay(states[0], 500);
+      }
+      sfClear(sf[0]);
+      for (int i = 0; i < 5;i++){
+        sfShift(sf[0],1,true);
+        whileDelay(states[0], 500);
+        sfShift(sf[0],2,false);
+        whileDelay(states[0], 500);
+        sfShift(sf[0],2,false);
+        whileDelay(states[0], 500);
+        sfShift(sf[0],2,false);
+        whileDelay(states[0], 500);
+        sfShift(sf[0],2,false);
+      }      
+      for (int i = 0; i < 5;i++){
+        sfClear(sf[0]);
+        sfShift(sf[0],1,true);
+        sfShift(sf[0],7,false);
+        whileDelay(states[0], 500);
+        sfClear(sf[0]);
+        sfShift(sf[0],1,true);
+        sfShift(sf[0],5,false);
+        whileDelay(states[0], 500);
+        sfClear(sf[0]);
+        sfShift(sf[0],1,true);
+        sfShift(sf[0],3,false);
+        whileDelay(states[0], 500);
+        sfClear(sf[0]);
+        sfShift(sf[0],1,true);
+        sfShift(sf[0],1,false);
+        whileDelay(states[0], 500);
+      }
+    }    
+  }
+}
+
+
+void setup() {
+  // put your setup code here, to run once:
+
+  for (int i = 0; i< 3; i++){
+    pinMode(sf[i].data, OUTPUT);
+    pinMode(sf[i].clock, OUTPUT);
+    pinMode(sf[i].latch, OUTPUT);  
+  }
+
+
+  xTaskCreatePinnedToCore(
+    LeftToRight,
+    "Left to Right",
+    5000,
+    NULL,
+    1,
+    NULL,
+    1);
+  xTaskCreatePinnedToCore(
+    RightToLeft,
+    "Right to Left",
+    5000,
+    NULL,
+    1,
+    NULL,
+    1);
+  xTaskCreatePinnedToCore(
+    OddEven,
+    "OddEven",
+    5000,
+    NULL,
+    1,
+    NULL,
+    1);
+  
+}
+
+void loop() {
+  // put your main code here, to run repeatedly:
+}

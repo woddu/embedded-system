@@ -1,0 +1,221 @@
+#include <Arduino.h>
+
+struct hc595{uint8_t data;  uint8_t latch; uint8_t clock;};
+
+hc595 sf[]= {{14,27,16},{17,25,26}};
+int shotClockSecs;
+int shotClock = 24;
+int milliSeconds[] = {9,9};
+int digits[2];
+
+void sfClock(hc595 sf){
+  digitalWrite(sf.clock, HIGH);
+  vTaskDelay(1 / portTICK_PERIOD_MS);
+  digitalWrite(sf.clock, LOW);
+}
+
+void sfLatch(hc595 sf){
+  digitalWrite(sf.latch, HIGH);
+  vTaskDelay(1 / portTICK_PERIOD_MS);
+  digitalWrite(sf.latch, LOW);
+}
+
+void sfShift(hc595 sf,int shifts,bool on){
+  for (int i = 0; i < shifts; i++)  {
+    if (on){
+    digitalWrite(sf.data, HIGH);
+    } else {
+    digitalWrite(sf.data, LOW);
+    }
+    sfClock(sf);
+  }
+  digitalWrite(sf.data, LOW);
+  sfLatch(sf);
+}
+
+void clock(hc595 sf,int shifts, bool on){
+  for (int i = 0; i < shifts; i++)  {
+    if (on){
+    digitalWrite(sf.data, HIGH);
+    } else {
+    digitalWrite(sf.data, LOW);
+    }
+    sfClock(sf);
+  }
+}
+
+void zero(hc595 sf, bool dec){
+  clock(sf, 1, 0);
+  clock(sf, 6, 1); 
+  if (dec){clock(sf,1,1);}else{clock(sf, 1, 0);}
+  sfLatch(sf);
+}
+
+void one(hc595 sf, bool dec){
+  clock(sf, 4, 0);
+  clock(sf, 2, 1);
+  clock(sf, 1, 0);
+  if (dec){clock(sf,1,1);}else{clock(sf, 1, 0);}
+  sfLatch(sf);
+}
+
+void two(hc595 sf, bool dec){
+  clock(sf, 1, 1);
+  clock(sf, 1, 0);
+  clock(sf, 2, 1);
+  clock(sf, 1, 0);
+  clock(sf, 2, 1);
+  if (dec){clock(sf,1,1);}else{clock(sf, 1, 0);}
+  sfLatch(sf);
+}
+
+void three(hc595 sf, bool dec){
+  clock(sf, 1, 1);  
+  clock(sf, 2, 0);
+  clock(sf, 4, 1);
+  if (dec){clock(sf,1,1);}else{clock(sf, 1, 0);}
+  sfLatch(sf);
+}
+
+void four(hc595 sf, bool dec){
+  clock(sf, 2, 1);
+  clock(sf, 2, 0);
+  clock(sf, 2, 1);
+  clock(sf, 1, 0);
+  if (dec){clock(sf,1,1);}else{clock(sf, 1, 0);}
+  sfLatch(sf);
+}
+
+void five(hc595 sf, bool dec){
+  clock(sf, 2, 1);
+  clock(sf, 1, 0);
+  clock(sf, 2, 1);
+  clock(sf, 1, 0);
+  clock(sf, 1, 1);
+  if (dec){clock(sf,1,1);}else{clock(sf, 1, 0);}
+  sfLatch(sf);
+}
+
+void six(hc595 sf, bool dec){
+  clock(sf, 5, 1);
+  clock(sf, 1, 0);
+  clock(sf, 1, 1);
+  if (dec){clock(sf,1,1);}else{clock(sf, 1, 0);}
+  sfLatch(sf);
+}
+
+void seven(hc595 sf, bool dec){
+  clock(sf, 4, 0);
+  clock(sf, 3, 1);
+  if (dec){clock(sf,1,1);}else{clock(sf, 1, 0);}
+  sfLatch(sf);
+}
+
+void eight(hc595 sf, bool dec){
+  clock(sf, 7, 1);
+  if (dec){clock(sf,1,1);}else{clock(sf, 1, 0);}
+  sfLatch(sf);
+}
+
+void nine(hc595 sf, bool dec){
+  clock(sf, 2, 1);
+  clock(sf, 1, 0);
+  clock(sf, 4, 1);
+  if (dec){clock(sf,1,1);}else{clock(sf, 1, 0);}
+  sfLatch(sf);
+}
+
+void count(hc595 sf, int count, bool dec){
+  switch (count){
+    case 0:
+      zero(sf, dec);
+      break;
+    case 1:
+      one(sf, dec);
+      break;
+    case 2:
+      two(sf, dec);
+      break;
+    case 3:
+      three(sf, dec);
+      break;
+    case 4:
+      four(sf, dec);
+      break;
+    case 5:
+      five(sf, dec);
+      break;
+    case 6:
+      six(sf, dec);
+      break;
+    case 7:
+      seven(sf, dec);
+      break;
+    case 8:
+      eight(sf, dec);
+      break;
+    case 9:
+      nine(sf, dec);
+      break;
+    default:
+      break;
+  }
+}
+
+int val;
+
+void sfClear(hc595 sf){
+  digitalWrite(sf.data, LOW);
+  for (int i = 0; i < 8; i++)  {
+    sfClock(sf);
+  }
+  sfLatch(sf);
+}
+
+void setup() {
+  // put your setup code here, to run once:
+  Serial.begin(115200);
+  for (int i = 0; i < 2; i++){
+    pinMode(sf[i].data, OUTPUT);
+    pinMode(sf[i].clock, OUTPUT);
+    pinMode(sf[i].latch, OUTPUT); 
+  }
+
+  
+}
+
+void loop() {
+  // put your main code here, to run repeatedly:
+  Serial.println(shotClock);
+  Serial.print(milliSeconds[0]);
+  Serial.print(".");
+  Serial.println(milliSeconds[1]);
+  if (shotClock < 0){
+    shotClock = 24;
+    milliSeconds[0] = 9;
+    milliSeconds[1] = 9;
+  } else {
+    shotClockSecs = shotClock;
+    for (int i = 1; i >= 0; i--){
+      digits[i] = shotClockSecs % 10;
+      shotClockSecs = shotClockSecs / 10;
+    }
+    if (shotClock < 10){
+      if (milliSeconds[1] < 0){
+        milliSeconds[1] = 9;
+      }
+      count(sf[0], milliSeconds[0],1);
+      for (int i = 10; i > 0; i--){
+        count(sf[1], milliSeconds[1],0);
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+        milliSeconds[1]--;
+      }
+      milliSeconds[0]--;
+    } else {
+      count(sf[0], digits[0],0);
+      count(sf[1], digits[1],0);
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+    shotClock--;
+  }
+}

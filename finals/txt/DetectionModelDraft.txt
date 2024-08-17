@@ -1,0 +1,109 @@
+#include <Arduino.h>
+
+#define SOUND_SPEED 0.034
+
+static TimerHandle_t sleep_timer = NULL;
+static const TickType_t sleep_time = 20000/ portTICK_PERIOD_MS;
+const int pirPin = 12;
+const int solenoidPin = 14;
+const int humidifierPin = 2;
+
+bool humidifierState = false;
+
+const int trigger = 5;
+const int echo = 18;
+
+long duration;
+
+float distanceCm;
+
+bool motionDetected;
+
+void Sleep(TimerHandle_t timer){
+  if (humidifierPin){
+    digitalWrite(humidifierPin, HIGH);
+    vTaskDelay(250/ portTICK_PERIOD_MS);
+    digitalWrite(humidifierPin, LOW);
+  }
+  esp_deep_sleep_start();
+}
+
+void UDSGetDistance(){
+  digitalWrite(trigger, LOW);
+  delayMicroseconds(2);
+  // Sets the trigPin on HIGH state for 10 micro seconds
+  digitalWrite(trigger, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigger, LOW);
+  
+  // Reads the echoPin, returns the sound wave travel time in microseconds
+  duration = pulseIn(echo, HIGH);
+  
+  // Calculate the distance
+  distanceCm = duration * SOUND_SPEED/2;
+}
+
+
+
+void PIR(void* param){
+  xTimerStart(sleep_timer,sleep_time);
+  int prev, curr;
+  while(1){
+    prev = curr;
+    curr = digitalRead(pirPin);
+    if ((curr == HIGH && prev ==LOW) || (curr == HIGH && prev == HIGH)){
+      xTimerReset(sleep_timer, sleep_time);
+      if (!humidifierState){
+        digitalWrite(humidifierPin, HIGH);
+        vTaskDelay(250 / portTICK_PERIOD_MS);
+        digitalWrite(humidifierPin, LOW); 
+        humidifierState = true;
+      }
+    }
+    vTaskDelay(15 / portTICK_PERIOD_MS);
+  } 
+}
+
+
+
+void setup(){
+  Serial.begin(115200);
+  setCpuFrequencyMhz(160);
+  pinMode(solenoidPin, OUTPUT);
+  pinMode(humidifierPin, OUTPUT);
+
+  pinMode(pirPin, INPUT);
+  pinMode(echo, INPUT);
+  pinMode(trigger, OUTPUT);
+
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_12, 1);
+
+  sleep_timer = xTimerCreate("Sleep Timer",sleep_time,pdFALSE,(void*)0,Sleep);
+  
+
+  xTaskCreatePinnedToCore(
+    PIR,
+    "PIR",
+    5000,
+    NULL,
+    1,
+    NULL,
+    0
+  );
+
+}
+
+void loop(){
+  UDSGetDistance();
+    if (distanceCm > 7.5 && distanceCm < 25){
+    
+      Serial.println("on  ");
+      digitalWrite(solenoidPin, HIGH);
+      xTimerReset(sleep_timer, sleep_time);
+    } else {
+      Serial.println("off ");
+      digitalWrite(solenoidPin, LOW);
+    }
+    Serial.println(distanceCm);
+    delay(500);
+}

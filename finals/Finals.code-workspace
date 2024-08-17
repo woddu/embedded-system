@@ -1,0 +1,18 @@
+{
+	"folders": [
+		{
+			"name": "Finals",
+			"path": ".."
+		},
+		{
+			"name": "Esp32",
+			"path": "../../Esp32"
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"*.tcc": "cpp",
+			"cmath": "cpp"
+		}
+	}
+}

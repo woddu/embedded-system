@@ -1,0 +1,377 @@
+#include <esp_now.h>
+#include <WiFi.h>
+
+struct led{
+  int lednum;
+  int ledstate;
+};
+
+led leds[] = {{1,0}, {2,0}, {3,0}, {4,0}, {5,0},{6,0},{7,0},{8,0},{9,0},{10,0},{11,0}};
+
+const uint8_t ledpin[] = {13, 12, 14, 27, 26, 25, 33, 32, 15, 2, 4};
+ 
+struct hc595{uint8_t data;  uint8_t latch; uint8_t clock;};
+
+hc595 sf[]= {{16,17,5},{18,19,21}};
+int shotClockSecs;
+static int shotClock = 24;
+int milliSeconds[] = {9,9};
+int digits[2];
+
+bool play = true;
+
+int temp;
+
+void sfClock(hc595 sf){
+  digitalWrite(sf.clock, HIGH);
+  vTaskDelay(1 / portTICK_PERIOD_MS);
+  digitalWrite(sf.clock, LOW);
+}
+
+void sfLatch(hc595 sf){
+  digitalWrite(sf.latch, HIGH);
+  vTaskDelay(1 / portTICK_PERIOD_MS);
+  digitalWrite(sf.latch, LOW);
+}
+
+void sfShift(hc595 sf,int shifts,bool on){
+  for (int i = 0; i < shifts; i++)  {
+    if (on){
+    digitalWrite(sf.data, HIGH);
+    } else {
+    digitalWrite(sf.data, LOW);
+    }
+    sfClock(sf);
+  }
+  digitalWrite(sf.data, LOW);
+  sfLatch(sf);
+}
+
+void clock(hc595 sf,int shifts, bool on){
+  for (int i = 0; i < shifts; i++)  {
+    if (on){
+    digitalWrite(sf.data, HIGH);
+    } else {
+    digitalWrite(sf.data, LOW);
+    }
+    sfClock(sf);
+  }
+}
+
+void zero(hc595 sf, bool dec){
+  clock(sf, 1, 0);
+  clock(sf, 6, 1); 
+  if (dec){clock(sf,1,1);}else{clock(sf, 1, 0);}
+  sfLatch(sf);
+}
+
+void one(hc595 sf, bool dec){
+  clock(sf, 4, 0);
+  clock(sf, 2, 1);
+  clock(sf, 1, 0);
+  if (dec){clock(sf,1,1);}else{clock(sf, 1, 0);}
+  sfLatch(sf);
+}
+
+void two(hc595 sf, bool dec){
+  clock(sf, 1, 1);
+  clock(sf, 1, 0);
+  clock(sf, 2, 1);
+  clock(sf, 1, 0);
+  clock(sf, 2, 1);
+  if (dec){clock(sf,1,1);}else{clock(sf, 1, 0);}
+  sfLatch(sf);
+}
+
+void three(hc595 sf, bool dec){
+  clock(sf, 1, 1);  
+  clock(sf, 2, 0);
+  clock(sf, 4, 1);
+  if (dec){clock(sf,1,1);}else{clock(sf, 1, 0);}
+  sfLatch(sf);
+}
+
+void four(hc595 sf, bool dec){
+  clock(sf, 2, 1);
+  clock(sf, 2, 0);
+  clock(sf, 2, 1);
+  clock(sf, 1, 0);
+  if (dec){clock(sf,1,1);}else{clock(sf, 1, 0);}
+  sfLatch(sf);
+}
+
+void five(hc595 sf, bool dec){
+  clock(sf, 2, 1);
+  clock(sf, 1, 0);
+  clock(sf, 2, 1);
+  clock(sf, 1, 0);
+  clock(sf, 1, 1);
+  if (dec){clock(sf,1,1);}else{clock(sf, 1, 0);}
+  sfLatch(sf);
+}
+
+void six(hc595 sf, bool dec){
+  clock(sf, 5, 1);
+  clock(sf, 1, 0);
+  clock(sf, 1, 1);
+  if (dec){clock(sf,1,1);}else{clock(sf, 1, 0);}
+  sfLatch(sf);
+}
+
+void seven(hc595 sf, bool dec){
+  clock(sf, 4, 0);
+  clock(sf, 3, 1);
+  if (dec){clock(sf,1,1);}else{clock(sf, 1, 0);}
+  sfLatch(sf);
+}
+
+void eight(hc595 sf, bool dec){
+  clock(sf, 7, 1);
+  if (dec){clock(sf,1,1);}else{clock(sf, 1, 0);}
+  sfLatch(sf);
+}
+
+void nine(hc595 sf, bool dec){
+  clock(sf, 2, 1);
+  clock(sf, 1, 0);
+  clock(sf, 4, 1);
+  if (dec){clock(sf,1,1);}else{clock(sf, 1, 0);}
+  sfLatch(sf);
+}
+
+void count(hc595 sf, int count, bool dec){
+  switch (count){
+    case 0:
+      zero(sf, dec);
+      break;
+    case 1:
+      one(sf, dec);
+      break;
+    case 2:
+      two(sf, dec);
+      break;
+    case 3:
+      three(sf, dec);
+      break;
+    case 4:
+      four(sf, dec);
+      break;
+    case 5:
+      five(sf, dec);
+      break;
+    case 6:
+      six(sf, dec);
+      break;
+    case 7:
+      seven(sf, dec);
+      break;
+    case 8:
+      eight(sf, dec);
+      break;
+    case 9:
+      nine(sf, dec);
+      break;
+    default:
+      break;
+  }
+}
+
+// callback function that will be executed when data is received
+void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
+  int lednum;
+  memcpy(&lednum, incomingData, sizeof(int));
+  switch (lednum){
+    case 1:
+      memcpy(&leds[0], incomingData, sizeof(leds[0]));
+      digitalWrite(ledpin[0], leds[0].ledstate);
+      Serial.print("lednum = ");
+      Serial.print(leds[0].lednum);
+      Serial.print("lednum = ");
+      Serial.print(leds[0].ledstate);
+      Serial.println();
+      break;
+    case 2:
+      memcpy(&leds[1], incomingData, sizeof(leds[1]));
+      digitalWrite(ledpin[1], leds[1].ledstate);
+      Serial.print("lednum = ");
+      Serial.print(leds[1].lednum);
+      Serial.print("lednum = ");
+      Serial.print(leds[1].ledstate);
+      Serial.println();
+      break;
+    case 3:
+      memcpy(&leds[2], incomingData, sizeof(leds[2]));
+      digitalWrite(ledpin[2], leds[2].ledstate);
+      Serial.print("lednum = ");
+      Serial.print(leds[2].lednum);
+      Serial.print("lednum = ");
+      Serial.print(leds[2].ledstate);
+      Serial.println();
+      break;
+    case 4:
+      memcpy(&leds[3], incomingData, sizeof(leds[3]));
+      digitalWrite(ledpin[3], leds[3].ledstate);
+      Serial.print("lednum = ");
+      Serial.print(leds[3].lednum);
+      Serial.print("lednum = ");
+      Serial.print(leds[3].ledstate);
+      Serial.println();
+      break;
+    case 5:
+      memcpy(&leds[4], incomingData, sizeof(leds[4]));
+      digitalWrite(ledpin[4], leds[4].ledstate);
+      Serial.print("lednum = ");
+      Serial.print(leds[4].lednum);
+      Serial.print("lednum = ");
+      Serial.print(leds[4].ledstate);
+      Serial.println();
+      break;
+    case 6:
+      memcpy(&leds[5], incomingData, sizeof(leds[5]));
+      digitalWrite(ledpin[5], leds[5].ledstate);
+      Serial.print("lednum = ");
+      Serial.print(leds[5].lednum);
+      Serial.print("lednum = ");
+      Serial.print(leds[5].ledstate);
+      Serial.println();
+      break;
+    case 7:
+      memcpy(&leds[6], incomingData, sizeof(leds[6]));
+      if (leds[6].ledstate == 1){
+        play = true;
+      } else if (leds[6].ledstate == 0){
+        play = false;
+      }
+      Serial.print("lednum = ");
+      Serial.print(leds[6].lednum);
+      Serial.print("lednum = ");
+      Serial.print(leds[6].ledstate);
+      Serial.println();
+      break;
+    case 8:
+      memcpy(&leds[7], incomingData, sizeof(leds[7]));
+      if (leds[7].ledstate == 1){
+        if (play){
+          shotClock = 25;
+          temp = 25;
+        } else {
+          shotClock = 24;
+          temp = 24;
+        }
+      }
+      Serial.print("lednum = ");
+      Serial.print(leds[7].lednum);
+      Serial.print("lednum = ");
+      Serial.print(leds[7].ledstate);
+      Serial.println();
+      break;
+    case 9:
+      memcpy(&leds[8], incomingData, sizeof(leds[8]));
+      if (leds[8].ledstate == 1){
+        if (play){
+          shotClock = 15;
+          temp = 15;
+        } else {
+          shotClock = 14;
+          temp = 14;
+        };
+      }
+      Serial.print("lednum = ");
+      Serial.print(leds[8].lednum);
+      Serial.print("lednum = ");
+      Serial.print(leds[8].ledstate);
+      Serial.println();
+      break;
+    case 10:
+      memcpy(&leds[9], incomingData, sizeof(leds[9]));
+      digitalWrite(ledpin[9], leds[9].ledstate);
+      Serial.print("lednum = ");
+      Serial.print(leds[9].lednum);
+      Serial.print("lednum = ");
+      Serial.print(leds[9].ledstate);
+      Serial.println();
+      break;
+    case 11:
+      memcpy(&leds[10], incomingData, sizeof(leds[10]));
+      digitalWrite(ledpin[10], leds[10].ledstate);
+      Serial.print("lednum = ");
+      Serial.print(leds[10].lednum);
+      Serial.print("lednum = ");
+      Serial.print(leds[10].ledstate);
+      Serial.println();
+      break;
+    default:
+      Serial.println("Unknown");
+      break;
+  }
+}
+
+void setup() {
+  // Initialize Serial Monitor
+  Serial.begin(115200);
+  for (int i = 0; i < 11; i++){
+    pinMode(ledpin[i], OUTPUT);
+  }
+  for (int i = 0; i < 2; i++){
+    pinMode(sf[i].data, OUTPUT);
+    pinMode(sf[i].clock, OUTPUT);
+    pinMode(sf[i].latch, OUTPUT); 
+  }
+  play = false;
+  count(sf[0], 2,0);
+  count(sf[1], 4,0);
+  temp = 24;
+  shotClockSecs = shotClock;
+  for (int i = 1; i >= 0; i--){
+    digits[i] = shotClockSecs % 10;
+    shotClockSecs = shotClockSecs / 10;
+  }
+  // Set device as a Wi-Fi Station
+  WiFi.mode(WIFI_STA);
+  delay(1000);
+  Serial.print("MAC: "); Serial.println(WiFi.macAddress());
+  // Init ESP-NOW
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("Error initializing ESP-NOW");
+    return;
+  }
+  // Once ESPNow is successfully Init, we will register for recv CB to
+  // get recv packer info
+  esp_now_register_recv_cb(OnDataRecv);
+}
+ 
+void loop() {
+  if (play){
+      temp = shotClock;
+      if (shotClock < 0){
+        shotClock = 24;
+        milliSeconds[0] = 9;
+        milliSeconds[1] = 9;
+      } else {
+        shotClockSecs = shotClock;
+        for (int i = 1; i >= 0; i--){
+          digits[i] = shotClockSecs % 10;
+          shotClockSecs = shotClockSecs / 10;
+        }
+        if (shotClock < 10){
+          sfClear(sf[0]);
+          count(sf[1], shotClock,0);
+        } else {
+          count(sf[0], digits[0],0);
+          count(sf[1], digits[1],0);
+        }
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        shotClock--;
+      }
+    } else if (!play) {
+      shotClock = temp;
+        if (shotClock < 10){
+          sfClear(sf[0]);
+          count(sf[1], shotClock,1);
+        } else {
+        count(sf[0], digits[0],0);
+        count(sf[1], digits[1],0);
+        }
+      vTaskDelay(5/portTICK_PERIOD_MS);
+    }
+}

@@ -1,0 +1,281 @@
+#include <WiFi.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <WiFiAP.h>
+//#include <WiFiSTA.h>
+#include <Preferences.h>
+//Rotation of 
+#define ROTATE 530 
+AsyncWebServer server(80);
+
+Preferences preferences;
+
+const char* ssid = "S2-Mini";
+const char* password = "123456789";
+
+const char* PARAM_MOVE = "move";
+const char* PARAM_STOP = "stop";
+
+// Motor A
+int motor1Pin1 = 27; 
+int motor1Pin2 = 26; 
+int enable1Pin = 14; 
+
+// Setting PWM properties
+const int freq = 30000;
+const int pwmChannel = 0;
+const int resolution = 8;
+int dutyCycle = 200;
+
+bool forward, backward, leftward, rightward;
+
+bool noMovement(){
+  return !forward  && !backward && !leftward && !rightward;
+}
+
+void moving(char direction){
+  if(direction == 'f'){
+    forward = true;
+    backward = leftward = rightward = false;
+  } else if(direction == 'b'){
+    backward = true;
+    forward = leftward = rightward = false;
+  } else if(direction == 'l'){
+    leftward = true;
+    forward = backward = rightward = false;    
+  } else if(direction == 'r'){
+    rightward = true;
+    forward = backward = leftward = false;        
+  }
+}
+
+const char index_html[] PROGMEM = R"rawliteral(
+<!DOCtype html><html>
+<head>
+	<meta charset="utf-8">
+	<title> ELEVATOR BUTTONS </title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    html {font-family: Arial; display: inline-block; align-items: center;}
+    body { display: flex; justify-content: center; background: #ffffff; }
+    .main { position: relative; width: 1100px; display: flex; justify-content: center; align-items: center; flex-wrap: wrap; padding: 30px; margin-top: 8px; }
+    .main .card { width: 320px; position: relative; height: 550px; background: #C2F18D; margin: 30px 10px; padding: 30px 15px; display: flex; flex-direction: column; transition: 0.3s ease-in-out; margin-top: 5px; }
+    .main .card .buttonsDiv { width: 180px; position: relative; height: auto; border-radius: 15px; background: #C2F18D; display: flex; flex-direction: column; align-items: center; transition: 0.3s ease-in-out; gap: 90px; }
+    .main .card .buttonsDiv .buttonUp { width: 70px; position: relative; height: 70px; border-radius: 100px; background: #386663;  padding: 5px 5px; display:flex; justify-content: center; align-items: center; flex-wrap: wrap; transition: 0.3s ease-in-out; margin: auto; }
+    .main .card .otherDiv { width: auto; position: relative; height: auto; border-radius: 15px; background: #C2F18D; margin: 5px 5px; padding: 5px 5px; display: flex; flex-direction: column; align-items: center; transition: 0.3s ease-in-out; margin-top: 5px; }
+    .main .card .row { display: flex; height: 355px;}
+    .arrow { border: solid black; border-width: 0 8px 8px 0; display: inline-block; padding: 8px; }
+    .right { transform: rotate(-45deg); -webkit-transform: rotate(-45deg); margin-right: 5px;margin-top: 5px;}
+    .left { transform: rotate(135deg); -webkit-transform: rotate(135deg); margin-left: 5px;margin-top: 5px;}
+    .up { transform: rotate(-135deg); -webkit-transform: rotate(-135deg); margin-top: 5px; }
+    .down { transform: rotate(45deg); -webkit-transform: rotate(45deg); margin-bottom: 5px; }
+  </style>
+</head>
+<body>
+	<div class="main">
+		<div class="card">
+			<div class="otherDiv">
+				<h1>Remote</h1>				
+			</div>
+			<div class="row">
+				<div class="buttonsDiv">
+					<div class="buttonUp">
+						<a onClick="move(this)" onmouseup="release(this)" id="left"><i class="arrow left"></i></a>
+					</div>					
+				</div>
+				<div class="buttonsDiv">
+					<div class="buttonUp">
+						<a onClick="move(this)" onmouseup="release(this)" id="forward"><i class="arrow up"></i></a>
+					</div>
+					<div class="buttonUp">
+						<a onClick="move(this)" onmouseup="release(this)" id="back"><i class="arrow down"></i></a>
+					</div>
+				</div>
+				<div class="buttonsDiv">					
+					<div class="buttonUp">
+						<a onClick="move(this)" onmouseup="release(this)" id="right"><i class="arrow right"></i></a>
+					</div>
+				</div>
+			</div>
+			<div class="otherDiv">
+				<a><br>aasdasdas</a>		
+			</div>
+		</div>			
+	</div>
+	<script>
+		const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sept", "Oct", "Nov", "Dec"];
+    var d;
+		
+		function move(element){
+			d = new Date();
+      let month = months[d.getMonth()];
+      let day = d.getDay() <= 10 ? `0${d.getDay()}` : `${d.getDay()}`;
+      let hourInt = d.getHours() > 12 ? d.getHours() - 12 : d.getHours();
+      let hour = hourInt <= 10 ? `0${hourInt}` : `${hourInt}`;
+      let ampm = d.getHours() >= 12 ? 'PM' : 'AM';
+      let min = d.getMinutes();
+      let dateFormat = `  ${month} ${day}, ${hour}:${min} ${ampm}`
+			var xhr = new XMLHttpRequest();
+			xhr.open("GET", "/move?move=" + element.id + dateFormat, true);
+			xhr.send();
+		}
+		function release(element){
+			var xhr = new XMLHttpRequest();
+			xhr.open("GET","/stop?stop=" + element.id , true);
+			xhr.send();
+		}
+	</script>
+</body></html>
+)rawliteral";
+
+String date;
+
+void appendHistory(String a){
+  preferences.putString("h0",preferences.getString("h1"));
+  preferences.putString("h1",preferences.getString("h2"));
+  preferences.putString("h2",preferences.getString("h3"));
+  preferences.putString("h3",preferences.getString("h4"));
+  preferences.putString("h4",preferences.getString("h5"));
+  preferences.putString("h5",a);
+}
+
+// Replaces placeholder with button section in your web page
+String processor(const String& var){
+  //Serial.println(var);
+  if(var == "A"){
+    String buttons = "";
+    buttons += "<p>"+ String() +"</p>";    
+    return buttons;
+  } else if(var == "B"){
+    String buttons = "";
+    buttons += "<a>" + preferences.getString("h5") + "<br>";    
+    buttons += preferences.getString("h4") + "<br>";    
+    buttons += preferences.getString("h3") + "<br>";    
+    buttons += preferences.getString("h2") + "<br>";    
+    buttons += preferences.getString("h1") + "<br>";    
+    buttons += preferences.getString("h0") +"</a>";    
+    return buttons;
+  } else {
+    return String();
+  }
+}
+
+void setup(){
+  // Serial port for debugging purposes
+  Serial.begin(115200);
+
+  preferences.begin("Remote", false);
+ 
+  // WiFi.mode(WIFI_STA);
+  // WiFi.begin(ssid, password);
+  // if (WiFi.waitForConnectResult() != WL_CONNECTED) {
+  //     Serial.printf("WiFi Failed!\n");
+  //     return;
+  // }
+
+  if (!WiFi.softAP(ssid, password)) {
+    log_e("Soft AP creation failed.");
+    while(1);
+  }
+
+  // Route for root / web page
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/html", index_html);
+  });
+  // Send a GET request to <ESP_IP>/move?move=<floor>
+  server.on("/move", HTTP_GET, 
+    [](AsyncWebServerRequest *request) {
+      String move;    
+      if (request->hasParam(PARAM_MOVE) ) {
+        move = request->getParam(PARAM_MOVE)->value();
+        Serial.println(move);
+        if(move.startsWith("forward") && noMovement()){
+          forward = true;
+          backward = leftward = rightward = false;
+          Serial.print(move+ " ");
+          move.remove(0,7);
+          Serial.println(move);
+
+        } else if(move.startsWith("back") && noMovement()){
+          backward = true;
+          forward = leftward = rightward = false;
+          Serial.print(move+ " ");
+          move.remove(0,4);      
+
+          Serial.println(move);
+        } else if(move.startsWith("left") && noMovement()){
+          leftward= true;
+          forward = backward = rightward = false;
+          Serial.print(move+ " ");
+          move.remove(0,4);          
+          Serial.println(move);
+          
+        } else if(move.startsWith("right") && noMovement()){
+          rightward = true;
+          forward = backward = leftward = false;
+          Serial.print(move+ " ");
+          move.remove(0,4);          
+          
+          Serial.println(move);
+        }
+      } else {
+        move = "No message sent";
+      }    
+      request->send(200, "text/plain", "OK");
+    }
+  );
+  // Send a GET request to <ESP_IP>/store?num=<floor>
+  server.on("/stop", HTTP_GET, 
+    [](AsyncWebServerRequest *request) {
+      String stop;    
+      if (request->hasParam(PARAM_STOP) ) {
+        stop = request->getParam(PARAM_STOP)->value();
+        forward = backward = leftward = rightward = false;
+      }
+    }
+  );
+  // Send a GET request to <ESP_IP>/store?num=<floor>
+  // server.on("/history", HTTP_GET, 
+  //   [](AsyncWebServerRequest *request) {
+  //     request->send_P(200, "text/html", history_html, processor);
+  //   }
+  // );
+  // Start server
+  server.begin();
+
+  Serial.print("IP Address: ");
+  Serial.println( WiFi.softAPIP());
+  // Serial.println(WiFi.localIP());
+
+  pinMode(motor1Pin1, OUTPUT);
+  pinMode(motor1Pin2, OUTPUT);
+  pinMode(enable1Pin, OUTPUT);
+  
+  // configure LED PWM functionalitites
+  ledcSetup(pwmChannel, freq, resolution);
+  
+  // attach the channel to the GPIO to be controlled
+  ledcAttachPin(enable1Pin, pwmChannel);
+}
+
+void loop() {
+  if(forward){
+    digitalWrite(motor1Pin1, LOW);
+    digitalWrite(motor1Pin2, HIGH); 
+  } else if (backward){
+  digitalWrite(motor1Pin1, HIGH);
+  digitalWrite(motor1Pin2, LOW); 
+  }
+  // // Move DC motor forward with increasing speed
+  // digitalWrite(motor1Pin1, HIGH);
+  // digitalWrite(motor1Pin2, LOW);
+  // while (dutyCycle <= 255){
+  //   ledcWrite(pwmChannel, dutyCycle);   
+  //   Serial.print("Forward with duty cycle: ");
+  //   Serial.println(dutyCycle);
+  //   dutyCycle = dutyCycle + 5;
+  //   delay(500);
+  // }
+  // dutyCycle = 200;
+
+}

@@ -1,0 +1,420 @@
+#include <Arduino.h>
+int button[] = {12,13,14};
+
+int val[sizeof(button)/sizeof(button[0])];
+int prev[sizeof(button)/sizeof(button[0])];
+bool play[sizeof(button)/sizeof(button[0])];
+//Timers
+static const TickType_t timeDelay = 10 / portTICK_PERIOD_MS;
+static const TickType_t shotClockSecDelay = 100 / portTICK_PERIOD_MS;
+static TimerHandle_t timeCountDown = NULL;
+static TimerHandle_t shotClockCountDown = NULL;
+static TaskHandle_t control;
+//Shift Register to 7 Segment
+int digit[] = {
+  B01111110,B00110000,B01101101,B1111001,B00110011,B01011011,B01011111,B01110000,B01111111,B01111011
+};
+int digitdecimal[] = {
+  B11111110,B10110000,B11101101,B1111001,B10110011,B11011011,B11011111,B11110000,B11111111,B11111011
+};
+int segment[] = { 
+  B00000001,B00000010,B00000100,B00001000
+};
+
+//Shift Registers
+struct hc595{uint8_t data;  uint8_t latch; uint8_t clock;};
+hc595 srShotClock = {26, 15, 14};
+hc595 srTime = {15, 2, 4};
+hc595 srScores = {26, 15, 14};
+//ScoreBoard
+int _time[] = {12, 0, 0};
+const int minute = 0;
+const int seconds = 1;
+const int mili = 2;
+int timeTemp;
+int timeDigit[4];
+bool stopTime = true;
+int shotClock = 240;
+int shotClockSecs;
+int shotClockDigit[3];
+bool playShotClock = false;
+int tm1Score = 0;
+int tm1Foul = 0;
+int tm2Score = 0;
+int tm2Foul = 0;
+// 28 outputs displayTime(timeDigit[0],timeDigit[1],timeDigit[2],timeDigit[3]);
+void displayTime(int thousands, int hundreds, int tens, int ones){
+  digitalWrite(srTime.data, LOW);
+  for (int i = 0; i < 4; i++){
+    for (int j = 0; j < 7; j++){
+      switch (i){
+        case 0:
+          if (bitRead(digit[ones], j) == 1){
+            digitalWrite(srTime.data, HIGH);
+          } else {
+            digitalWrite(srTime.data, LOW);
+          }
+          break;
+        case 1:
+          if (bitRead(digit[tens], j) == 1){
+            digitalWrite(srTime.data, HIGH);
+          } else {
+            digitalWrite(srTime.data, LOW);
+          }
+          break;
+        case 2:
+          if (bitRead(digit[hundreds], j) == 1){
+            digitalWrite(srTime.data, HIGH);
+          } else {
+            digitalWrite(srTime.data, LOW);
+          }
+          break;
+        case 3:
+          if (thousands > 0){
+            if (bitRead(digit[thousands], j) == 1){
+              digitalWrite(srTime.data, HIGH);
+            } else {
+              digitalWrite(srTime.data, LOW);
+            }
+          } else if (thousands == 0){
+            digitalWrite(srTime.data, LOW);
+          }
+          break;
+        default:
+          break;
+      }
+      digitalWrite(srTime.clock, HIGH);
+      digitalWrite(srTime.clock, LOW);
+    }
+  }
+    digitalWrite(srTime.data, HIGH);
+    digitalWrite(srTime.clock, HIGH);
+    digitalWrite(srTime.clock, LOW);
+  for (int k = 0; k < 3;k++){
+    digitalWrite(srTime.data, LOW);
+    digitalWrite(srTime.clock, HIGH);
+    digitalWrite(srTime.clock, LOW);
+  }
+  digitalWrite(srTime.latch, HIGH);
+  digitalWrite(srTime.latch, LOW);
+}
+// 16 outputs
+void displayShotClock(int tens, int ones){
+  digitalWrite(srShotClock.data, LOW);
+  for (int i = 0; i < 8; i++){
+    if (shotClock > 99){
+      if (bitRead(digit[ones], i) == 1){
+        digitalWrite(srShotClock.data, HIGH);
+      } else {
+        digitalWrite(srShotClock.data, LOW);
+      }
+    } else {
+      if (bitRead(digitdecimal[ones], i) == 1){
+        digitalWrite(srShotClock.data, HIGH);
+      } else {
+        digitalWrite(srShotClock.data, LOW);
+      }
+    }
+    digitalWrite(srShotClock.clock, HIGH);
+    digitalWrite(srShotClock.clock, LOW);
+  }
+  for (int i = 0; i < 8; i++){
+    if (bitRead(digit[tens], i) == 1){
+      digitalWrite(srShotClock.data, HIGH);
+    } else {
+      digitalWrite(srShotClock.data, LOW);
+    }
+    digitalWrite(srShotClock.clock, HIGH);
+    digitalWrite(srShotClock.clock, LOW);
+  }
+  digitalWrite(srShotClock.latch, HIGH);
+  digitalWrite(srShotClock.latch, LOW);
+}
+
+void displayScores(int tm1tens, int tm1ones,int tm2tens, int tm2ones,int tm2foul,int tm1foul ){
+  digitalWrite(srScores.clock, LOW);
+  digitalWrite(srScores.data, LOW);
+  for (int i = 0; i < 2; i++){
+    for (int j = 0; j < 7; j++){
+      switch (i){
+        case 0:
+          if (bitRead(digit[tm2ones], j) == 1){
+            digitalWrite(srScores.data, HIGH);
+          } else {
+            digitalWrite(srScores.data, LOW);
+          }
+          break;
+        case 1:
+          if (bitRead(digit[tm2tens], j) == 1){
+            digitalWrite(srScores.data, HIGH);
+          } else {
+            digitalWrite(srScores.data, LOW);
+          }
+          break;
+        default:
+          break;
+      }
+      digitalWrite(srScores.clock, HIGH);
+      digitalWrite(srScores.clock, LOW);
+    }
+  }
+  if (tm2Score > 99 && tm2Score < 200){
+    for (int i = 0; i < 2;i++){
+      digitalWrite(srScores.data, HIGH);
+      digitalWrite(srScores.clock, HIGH);
+      digitalWrite(srScores.clock, LOW);
+    }
+  } else if (tm2Score > 199){
+
+  } else if (tm2Score >= 0 && tm2Score < 100){
+    for (int i = 0; i < 2;i++){
+      digitalWrite(srScores.data, LOW);
+      digitalWrite(srScores.clock, HIGH);
+      digitalWrite(srScores.clock, LOW);
+    }
+  }
+  for (int i = 0; i < 2; i++){
+    for (int j = 0; j < 7; j++){
+      switch (i){
+        case 0:
+          if (bitRead(digit[tm1ones], j) == 1){
+            digitalWrite(srScores.data, HIGH);
+          } else {
+            digitalWrite(srScores.data, LOW);
+          }
+          break;
+        case 1:
+          if (bitRead(digit[tm1tens], j) == 1){
+            digitalWrite(srScores.data, HIGH);
+          } else {
+            digitalWrite(srScores.data, LOW);
+          }
+          break;
+        default:
+          break;
+      }
+      digitalWrite(srScores.clock, HIGH);
+      digitalWrite(srScores.clock, LOW);
+    }
+  }
+  if (tm1Score > 99 && tm1Score < 200){
+    for (int i = 0; i < 2;i++){
+      digitalWrite(srScores.data, HIGH);
+      digitalWrite(srScores.clock, HIGH);
+      digitalWrite(srScores.clock, LOW);
+    }
+  } else if (tm1Score > 199){
+    
+  } else if (tm1Score >= 0 && tm1Score < 100){
+    for (int i = 0; i < 2;i++){
+      digitalWrite(srScores.data, LOW);
+      digitalWrite(srScores.clock, HIGH);
+      digitalWrite(srScores.clock, LOW);
+    }
+  }
+  for (int i = 0; i < 2; i++){
+    for (int j = 0; j < 7; j++){
+      switch (i){
+        case 0:
+          if (bitRead(digit[tm2foul], j) == 1){
+            digitalWrite(srScores.data, HIGH);
+          } else {
+            digitalWrite(srScores.data, LOW);
+          }
+          break;
+        case 1:
+          if (bitRead(digit[tm1foul], j) == 1){
+            digitalWrite(srScores.data, HIGH);
+          } else {
+            digitalWrite(srScores.data, LOW);
+          }
+          break;
+        default:
+          break;
+      }
+      digitalWrite(srScores.clock, HIGH);
+      digitalWrite(srScores.clock, LOW);
+    }
+  }
+  for (int i = 0; i < 2;i++){
+      digitalWrite(srScores.data, LOW);
+      digitalWrite(srScores.clock, HIGH);
+      digitalWrite(srScores.clock, LOW);
+    }
+  digitalWrite(srScores.latch, HIGH);
+  digitalWrite(srScores.latch, LOW);
+}
+
+void ShotClock(TimerHandle_t timer){
+  shotClock--;
+  if (shotClock < 0) shotClock = 240;
+  shotClockSecs = shotClock;
+  for (int i = 2; i >= 0; i--){
+    shotClockDigit[i] = shotClockSecs % 10;
+    shotClockSecs = shotClockSecs / 10;
+  }
+  if (shotClock > 99){
+    displayShotClock(shotClockDigit[0],shotClockDigit[1]);
+  } else {
+    displayShotClock(shotClockDigit[1],shotClockDigit[2]);
+  }
+}
+void turncateTime(){
+  if (_time[minute] != 0){
+      timeTemp = _time[seconds];
+    for (int i = 1; i >= 0; i--){
+      timeDigit[i+2] = timeTemp % 10;
+      timeTemp = timeTemp / 10;
+    }
+      timeTemp = _time[minute];
+    for (int i = 1; i >= 0; i--){
+      timeDigit[i] = timeTemp % 10;
+      timeTemp = timeTemp / 10;
+    }
+  } else {
+      timeTemp = _time[mili];
+    for (int i = 1; i >= 0; i--){
+      timeDigit[i+2] = timeTemp % 10;
+      timeTemp = timeTemp / 10;
+    }
+      timeTemp = _time[seconds];
+    for (int i = 1; i >= 0; i--){
+      timeDigit[i] = timeTemp % 10;
+      timeTemp = timeTemp / 10;
+    }
+  }  
+}
+void _Time(TimerHandle_t timer){
+  _time[mili]--;
+  if (_time[mili] < 0) {
+    _time[mili] = 99;
+    _time[seconds]--;
+    if (_time[seconds] < 0){
+      _time[seconds] = 59;
+      _time[minute]--;
+      if (_time[minute] < 0){
+        _time[minute] = 0;
+        _time[seconds] = 0;
+        _time[mili] = 0;
+        stopTime = true;
+        turncateTime();
+        xTimerStop(timeCountDown,portMAX_DELAY);
+      }
+    }
+  }
+  turncateTime();
+}
+
+// 2 shift register, require a seperate task to loop
+void _4digit(int thousands, int hundreds, int tens, int ones, bool blink){
+  bool blinkA;
+  if (!blink) blinkA = false;
+  else blinkA = !blinkA;
+  int _4digits[] = { ones, tens, hundreds, thousands};
+  for (int i = 0; i < 4;i++){
+    for (int j = 0; j < 7;j++){
+        if ((bitRead(digit[_4digits[i]], j) == 1)){
+          if (i == 3)
+            if (_4digits[i] == 0)
+              digitalWrite(srTime.data, HIGH);
+            else 
+              digitalWrite(srTime.data, LOW);
+          else
+            digitalWrite(srTime.data, LOW);
+        } else {
+          digitalWrite(srTime.data, HIGH);
+        }
+      digitalWrite(srTime.clock, HIGH);
+      digitalWrite(srTime.clock, LOW);
+    }
+      for (int j = 0; j < 9;j++){
+        if (bitRead(segment[i], j) == 1){
+          digitalWrite(srTime.data, HIGH);
+        } else {
+          digitalWrite(srTime.data, LOW);
+        }
+        digitalWrite(srTime.clock, HIGH);
+        digitalWrite(srTime.clock, LOW);
+      }
+      digitalWrite(srTime.latch, HIGH);
+      digitalWrite(srTime.latch, LOW);
+      vTaskDelay(3 / portTICK_PERIOD_MS);
+  }
+  if (blinkA){
+    for( int i = 0; i < 16; i++){
+      digitalWrite(srTime.data, LOW);
+      digitalWrite(srTime.clock, HIGH);
+      digitalWrite(srTime.clock, LOW);
+    }
+    digitalWrite(srTime.latch, HIGH);
+    digitalWrite(srTime.latch, LOW);
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+  }
+}
+
+void TimeDisplay(void* param){
+  while (1){
+    turncateTime();
+    _4digit(timeDigit[0],timeDigit[1],timeDigit[2],timeDigit[3],stopTime);
+  }
+}
+
+void setup(){
+  Serial.begin(115200);
+  pinMode(srTime.data, OUTPUT);
+  pinMode(srTime.clock, OUTPUT);
+  pinMode(srTime.latch, OUTPUT);
+  for(int i = 0; i < sizeof(button)/sizeof(button[0]); i++){    
+    pinMode(button[i], INPUT_PULLDOWN);
+  }
+  xTaskCreatePinnedToCore(
+    TimeDisplay,
+    "Time Display",
+    5000,
+    NULL,
+    1,
+    NULL,
+    1
+  );
+  play[0] = false; play[1] = false;
+  timeCountDown = xTimerCreate("Time",timeDelay,pdTRUE,(void*)0,_Time);
+  shotClockCountDown = xTimerCreate("ShotClock",shotClockSecDelay,pdTRUE,(void*)1,ShotClock);
+}
+
+void loop(){
+ for(int i = 0; i < sizeof(button)/sizeof(button[0]); i++){
+    prev[i] = val[i];
+  }
+  for(int i = 0; i < sizeof(button)/sizeof(button[0]); i++){
+    val[i] = digitalRead(button[i]);
+  }
+  for(int i = 0; i < sizeof(button)/sizeof(button[0]); i++){
+    if (val[i] == 1 && prev[i] == 0){
+      if (i == 0){
+        if (play[i]){
+          play[i] = !play[i];
+          xTimerStop(timeCountDown,portMAX_DELAY);
+          stopTime = true;
+          Serial.println("Time Stopped");
+        } else {
+          play[i] = !play[i];
+          xTimerStart(timeCountDown,portMAX_DELAY);
+          stopTime = false;
+          Serial.println("Time Played");
+        }
+      } else if (i == 1){
+        xTimerStop(timeCountDown,portMAX_DELAY);
+        stopTime = true;
+        _time[0] = 12;
+        _time[1] = 0;
+        _time[2] = 0;
+        turncateTime();
+      } else if (i == 2){
+        _time[0] = 1;
+        _time[1] = 0;
+        _time[2] = 0;
+      }
+    } 
+  }
+  vTaskDelay(5);
+}

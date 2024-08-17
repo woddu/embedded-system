@@ -1,0 +1,539 @@
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <Wire.h>
+#include <WiFi.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <WiFiSTA.h>
+#include <Stepper_28BYJ_48.h>
+#include <Preferences.h>
+#include <Fonts/FreeSansBold18pt7b.h>
+//Rotation of 
+#define ROTATE 530 
+
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
+#define SCREEN_HEIGHT 64 // OLED display height, in pixels
+
+// Declaration for an SSD1306 display connected to I2C (SDA, SCL pins)
+#define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+AsyncWebServer server(80);
+
+Preferences preferences;
+
+Stepper_28BYJ_48 stepper( 0, 4, 16, 17);
+
+const unsigned char ArrowUp [] PROGMEM = {
+	0x00, 0x01, 0x80, 0x00, 0x00, 0x03, 0xe0, 0x00, 0x00, 0x0f, 0xf0, 0x00, 0x00, 0x1f, 0xf8, 0x00, 
+	0x00, 0x3f, 0xfc, 0x00, 0x00, 0x7f, 0xfe, 0x00, 0x01, 0xff, 0xff, 0x80, 0x03, 0xff, 0xff, 0xc0, 
+	0x07, 0xff, 0xff, 0xe0, 0x0f, 0xff, 0xff, 0xf0, 0x3f, 0xff, 0xff, 0xfc, 0x7f, 0xff, 0xff, 0xfe, 
+	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f, 0xff, 0xff, 0xfe, 0x00, 0x7f, 0xfe, 0x00, 
+	0x00, 0x7f, 0xfe, 0x00, 0x00, 0x7f, 0xfe, 0x00, 0x00, 0x7f, 0xfe, 0x00, 0x00, 0x7f, 0xfe, 0x00, 
+	0x00, 0x7f, 0xfe, 0x00, 0x00, 0x7f, 0xfe, 0x00, 0x00, 0x7f, 0xfe, 0x00, 0x00, 0x7f, 0xfe, 0x00, 
+	0x00, 0x7f, 0xfe, 0x00, 0x00, 0x7f, 0xfe, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x7f, 0xfe, 0x00, 0x00, 0x7f, 0xfe, 0x00, 0x00, 0x7f, 0xfe, 0x00
+};
+
+const unsigned char ArrowDown [] PROGMEM = {
+	0x00, 0x7f, 0xfe, 0x00, 0x00, 0x7f, 0xfe, 0x00, 0x00, 0x7f, 0xfe, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7f, 0xfe, 0x00, 0x00, 0x7f, 0xfe, 0x00, 
+	0x00, 0x7f, 0xfe, 0x00, 0x00, 0x7f, 0xfe, 0x00, 0x00, 0x7f, 0xfe, 0x00, 0x00, 0x7f, 0xfe, 0x00, 
+	0x00, 0x7f, 0xfe, 0x00, 0x00, 0x7f, 0xfe, 0x00, 0x00, 0x7f, 0xfe, 0x00, 0x00, 0x7f, 0xfe, 0x00, 
+	0x00, 0x7f, 0xfe, 0x00, 0x7f, 0xff, 0xff, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 
+	0x7f, 0xff, 0xff, 0xfe, 0x3f, 0xff, 0xff, 0xfc, 0x0f, 0xff, 0xff, 0xf0, 0x07, 0xff, 0xff, 0xe0, 
+	0x03, 0xff, 0xff, 0xc0, 0x01, 0xff, 0xff, 0x80, 0x00, 0x7f, 0xfe, 0x00, 0x00, 0x3f, 0xfc, 0x00, 
+	0x00, 0x1f, 0xf8, 0x00, 0x00, 0x0f, 0xf0, 0x00, 0x00, 0x03, 0xe0, 0x00, 0x00, 0x01, 0x80, 0x00
+};
+
+const char* ssid = "ELEVATOR CONTROL";
+const char* password = "elevator";
+
+
+const char* PARAM_FLOOR = "floor";
+const char* PARAM_DATE = "date";
+const char* PARAM_NUM = "num";
+
+const char index_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE HTML><html>
+<head>
+	<meta charset="utf-8">
+	<title> ELEVATOR BUTTONS </title>
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<style>
+	  * { margin: 0; padding: 0;  font-family: 'Alfa Slab One', cursive; }
+    body { display: flex; justify-content: center; background: #a8a8a8; }
+    .container { position: relative; width: 1100px; display: flex; justify-content: center; align-items: center; flex-wrap: wrap; padding: 30px; margin-top: 8px; }
+    .container .card { width: 308px; position: relative; height: 400px; background: #3f3c3c; margin: 30px 10px; padding: 30px 15px; display: flex; flex-direction: column; transition: 0.3s ease-in-out; margin-top: 5px; }
+    .container .card .imgBx { position: relative; width: 260px; height: 40px; top: -10px; left: 20px; box-shadow: 0 5px 20px rbga (0, 0, 0, 1.2); }
+    .original-button { left: 30px; position: relative; display: flex; align-items: center; justify-content: center; line-height: 1; text-decoration: none; color: #9b9b9b; font-size: 40px; border-radius: 50px; width: 120px; height: 80px; font-weight: bold; transition: 0.3s; box-shadow: 0px 2px 4px 0px rgba(0, 0, 0, 0.5);   margin: 5000; margin-top: 20px; }
+    .original-button:hover { transform: translateY(2px); box-shadow: 0 0 rgba(0, 0, 0, 0); }
+    .button-up { width: 30px; height: 65px; position: absolute; bottom: 240px; left: 210px; border-left: 25px solid transparent; border-right: 25px solid transparent; border-bottom: 50px solid #555; appearance: none; background-color: #1b1b1b; border: 2px solid #312a2a; box-sizing: border-box; color: #FFFFFF; cursor: pointer; display: inline-block; font-family: Roobert, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol"; font-size: 16px; font-weight: 600; line-height: normal; margin: 0; min-height: 60px; min-width: 0; outline: none; padding: 16px 24px; text-align: center; text-decoration: none; transition: all 300ms cubic-bezier(.23, 1, 0.32, 1); user-select: none; -webkit-user-select: none; touch-action: manipulation; width: 30px; will-change: transform; clip-path: polygon(15px 0, 0 65px, 30px 65px); }
+    .button-up:disabled { pointer-events: none; }
+    .button-up:hover { box-shadow: rgba(0, 0, 0, 0.25) 0 8px 15px; transform: translateY(-2px); }
+    .button-up:active { box-shadow: none; transform: translateY(0); }
+    .button-down { width: 30px; height: 65px; position: absolute; bottom: 150px; left: 210px; border-left: 25px solid transparent; border-right: 25px solid transparent; border-bottom: 50px solid #555; appearance: none; background-color: #1b1b1b; border: 2px solid #312a2a; box-sizing: border-box; color: #FFFFFF; cursor: pointer; display: inline-block; font-family: Roobert, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol"; font-size: 16px; font-weight: 600; line-height: normal; margin: 0; min-height: 60px; min-width: 0; outline: none; padding: 16px 24px; text-align: center; text-decoration: none; transition: all 300ms cubic-bezier(.23, 1, 0.32, 1); user-select: none; -webkit-user-select: none; touch-action: manipulation; width: 30px; will-change: transform; clip-path: polygon(15px 64px, 0 0, 30px 0); }
+    .button-down:disabled { pointer-events: none; }
+    .button-down:hover { box-shadow: rgba(49, 45, 45, 0.25) 0 8px 15px; transform: translateY(-2px); }
+    .button-down:active { box-shadow: none; transform: translateY(0); }
+    a { text-decoration: none; display: inline-block; padding: 8px 16px; }  
+    a:hover { background-color: #ddd; color: black; }
+    .previous { background-color: #f1f1f1; color: black; }
+    .next { background-color: #312a2a; color: white; }
+    .round { border-radius: 50px; }
+	</style>
+</head>
+<body>
+	<div class="container">
+		<div class="card">
+      <h3>Current Floor: %A%</h3>
+			<div class="imgBx">
+				<a href="#"></a>
+				<h2>ELEVATOR BUTTONS  </h2>
+				<p><br></p>
+			</div>
+      <a onClick="floor(this)" class="original-button" id="3">3</a>
+      <a onClick="floor(this)" class="original-button" id="2">2</a>
+		  <a onClick="floor(this)" class="original-button" id="1">1</a>
+	    <button onClick="floor(this)" class="button-up" role="button" id="up"></button>
+	    <button onClick="floor(this)" class="button-down" role="button" id="down"></button>
+	  </div>
+    <a href="http://192.168.51.142/history" class="next round"><h2>History</h2></a>
+	</div>
+  <script>
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sept", "Oct", "Nov", "Dec"];
+    var d;
+    function floor(element){
+      d = new Date();
+      let month = months[d.getMonth()];
+      let day = d.getDay() <= 10 ? `0${d.getDay()}` : `${d.getDay()}`;
+      let hour = d.getHours() <= 10 ? `0${d.getHours()}` : `${d.getHours()}`;
+      let ampm = hour >= 12 ? 'PM' : 'AM';
+      let min = d.getMinutes();
+      let dateFormat = `  ${month} ${day}, ${hour}:${min} ${ampm}`
+      var xhr = new XMLHttpRequest();            
+      setTimeout(function(){      
+        xhr.open("GET", "/floor?floor=" + element.id + "_" + dateFormat, true);
+        xhr.send();
+      }, 50);
+      setTimeout(function(){
+        location.reload();
+      }, 125);
+    }   
+  </script>
+</body>
+</html>
+)rawliteral";
+
+const char history_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE HTML><html>
+<head>
+	<meta charset="utf-8">
+	<title>HISTORY</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+	  * { margin: 0; padding: 0;  font-family: 'Alfa Slab One', cursive; }
+    body { display: flex; justify-content: center; background: #a8a8a8; }
+    .container { position: relative; width: 1100px; display: flex; justify-content: center; align-items: center; flex-wrap: wrap; padding: 30px; margin-top: 8px; }
+    .container .card { width: 308px; position: relative; height: 400px; background: #3f3c3c; margin: 30px 10px; padding: 30px 15px; display: flex; flex-direction: column; transition: 0.3s ease-in-out; margin-top: 5px; }
+    .container .card .imgBx { position: relative; width: 260px; height: 40px; top: -10px; left: 20px; box-shadow: 0 5px 20px rbga (0, 0, 0, 1.2); }
+    .original-button { left: 30px; position: relative; display: flex; align-items: center; justify-content: center; line-height: 1; text-decoration: none; color: #9b9b9b; font-size: 40px; border-radius: 50px; width: 120px; height: 80px; font-weight: bold; transition: 0.3s; box-shadow: 0px 2px 4px 0px rgba(0, 0, 0, 0.5);   margin: 5000; margin-top: 20px; }
+    .original-button:hover { transform: translateY(2px); box-shadow: 0 0 rgba(0, 0, 0, 0); }
+    .button-up { width: 30px; height: 65px; position: absolute; bottom: 240px; left: 210px; border-left: 25px solid transparent; border-right: 25px solid transparent; border-bottom: 50px solid #555; appearance: none; background-color: #1b1b1b; border: 2px solid #312a2a; box-sizing: border-box; color: #FFFFFF; cursor: pointer; display: inline-block; font-family: Roobert, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol"; font-size: 16px; font-weight: 600; line-height: normal; margin: 0; min-height: 60px; min-width: 0; outline: none; padding: 16px 24px; text-align: center; text-decoration: none; transition: all 300ms cubic-bezier(.23, 1, 0.32, 1); user-select: none; -webkit-user-select: none; touch-action: manipulation; width: 30px; will-change: transform; clip-path: polygon(15px 0, 0 65px, 30px 65px); }
+    .button-up:disabled { pointer-events: none; }
+    .button-up:hover { box-shadow: rgba(0, 0, 0, 0.25) 0 8px 15px; transform: translateY(-2px); }
+    .button-up:active { box-shadow: none; transform: translateY(0); }
+    .button-down { width: 30px; height: 65px; position: absolute; bottom: 150px; left: 210px; border-left: 25px solid transparent; border-right: 25px solid transparent; border-bottom: 50px solid #555; appearance: none; background-color: #1b1b1b; border: 2px solid #312a2a; box-sizing: border-box; color: #FFFFFF; cursor: pointer; display: inline-block; font-family: Roobert, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol"; font-size: 16px; font-weight: 600; line-height: normal; margin: 0; min-height: 60px; min-width: 0; outline: none; padding: 16px 24px; text-align: center; text-decoration: none; transition: all 300ms cubic-bezier(.23, 1, 0.32, 1); user-select: none; -webkit-user-select: none; touch-action: manipulation; width: 30px; will-change: transform; clip-path: polygon(15px 64px, 0 0, 30px 0); }
+    .button-down:disabled { pointer-events: none; }
+    .button-down:hover { box-shadow: rgba(49, 45, 45, 0.25) 0 8px 15px; transform: translateY(-2px); }
+    .button-down:active { box-shadow: none; transform: translateY(0); }
+    a { text-decoration: none; display: inline-block; padding: 8px 16px; }  
+    a:hover { background-color: #ddd; color: black; }
+    .previous { background-color: #f1f1f1; color: black; }
+    .next { background-color: #312a2a; color: white; }
+    .round { border-radius: 50px; }
+	</style>
+</head>
+ <body>
+	<div class="container">
+		<div class="card">
+			<div class="imgBx">
+				<a href="#"></a>
+				<h2>HISTORY</h2>
+				<p>
+          %B%
+				</p>
+			</div>
+		</div>
+    <a href="http://192.168.51.142" class="previous round"><h2>Buttons</h2></a>	
+	</div>
+ </body>
+</html>
+)rawliteral";
+
+const int buttonPins[] = {12, 14};
+
+const int membranePins[] = {15, 5, 23};
+
+const int ledPins[] = {27, 26, 25};
+
+int currentFloor = 2;
+
+int h_prevf, h_currf;
+
+bool moving = false;
+
+bool up, down;
+int floorCount;
+
+int curr[3], prev[3];
+int m_curr[3], m_prev[3];
+
+String date;
+
+
+void goToFloor(int floor){
+  int flor;
+  if(floor > currentFloor && !moving){
+    h_prevf = currentFloor;
+    flor = floor;            
+    floorCount = flor - currentFloor;            
+    currentFloor = flor;
+    up = true;
+    down = !up;
+    moving = true;
+    h_currf = currentFloor;
+  } else if (floor < currentFloor && !moving){
+    h_prevf = currentFloor;
+    flor = floor;            
+    floorCount = currentFloor - flor;
+    currentFloor = flor;
+    down = true;
+    up = !down;
+    moving = true;             
+    h_currf = currentFloor;
+  }
+}
+
+void buttonPress(int curr, int prev, void (*f)()){
+  if (curr == 1 && prev == 0){
+    f();
+  }
+}
+
+void appendHistory(String a){
+  preferences.putString("h0",preferences.getString("h1"));
+  preferences.putString("h1",preferences.getString("h2"));
+  preferences.putString("h2",preferences.getString("h3"));
+  preferences.putString("h3",preferences.getString("h4"));
+  preferences.putString("h4",preferences.getString("h5"));
+  preferences.putString("h5",a);
+}
+
+// Replaces placeholder with button section in your web page
+String processor(const String& var){
+  //Serial.println(var);
+  if(var == "A"){
+    String buttons = "";
+    buttons += "<p>"+ String(currentFloor) +"</p>";    
+    return buttons;
+  } else if(var == "B"){
+    String buttons = "";
+    buttons += "<a>" + preferences.getString("h5") + "<br>";    
+    buttons += preferences.getString("h4") + "<br>";    
+    buttons += preferences.getString("h3") + "<br>";    
+    buttons += preferences.getString("h2") + "<br>";    
+    buttons += preferences.getString("h1") + "<br>";    
+    buttons += preferences.getString("h0") +"</a>";    
+    return buttons;
+  } else {
+    return String();
+  }
+}
+
+void OLED(void* param){
+  display.setFont(&FreeSansBold18pt7b);
+  display.setTextColor(WHITE);
+  while(1){
+    if(moving){
+      if(down){
+        display.clearDisplay();
+  
+        static int y = 0;
+        y += 6; // Make the arrow move a bit faster
+        if (y >= 64) { // Adjust for the bigger arrow
+          y = -32; 
+        }
+
+        display.drawBitmap((SCREEN_WIDTH / 2) - 16, y, ArrowDown, 32, 32, WHITE);
+        //drawBigArrow(SCREEN_WIDTH / 2, y);
+
+        display.display();
+        delay(5); // Control the speed of the scrolling
+      } else if (up){
+        display.clearDisplay();
+        static int y = SCREEN_HEIGHT;
+        y -= 6; // Make the arrow move a bit faster
+        if (y <= -32) { // Adjust for the bigger arrow
+          y = SCREEN_HEIGHT; 
+        }
+
+        display.drawBitmap((SCREEN_WIDTH / 2) - 16, y, ArrowUp, 32, 32, WHITE);
+        //drawBigArrow(SCREEN_WIDTH / 2, y);
+
+        display.display();
+        delay(5); // Control the speed of the scrolling
+      }
+    } else {
+      display.clearDisplay();
+      display.setCursor(36, 42);
+      if(currentFloor == 1){
+        display.print("1st");
+      } else if(currentFloor == 2){
+        display.print("2nd");
+      } else if(currentFloor == 3){
+        display.print("3rd");
+      }
+      display.display();
+    }
+    delay(5);
+  }
+}
+
+void setup(){
+  // Serial port for debugging purposes
+  Serial.begin(115200);
+
+  preferences.begin("CurrentFloor", false);
+ 
+  for(int i = 0; i< 2; i++)
+    pinMode(buttonPins[i], INPUT_PULLDOWN);
+  for(int i = 0; i< 3; i++)
+    pinMode(ledPins[i], OUTPUT);
+  for(int i = 0; i< 3; i++)
+    pinMode(membranePins[i], INPUT_PULLDOWN);
+
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { 
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;); // Don't proceed, loop forever
+  }
+  display.clearDisplay();
+  display.display();
+
+  currentFloor = preferences.getInt("num");
+  Serial.print("CurrentFloor = ");
+  Serial.println(currentFloor);
+
+  xTaskCreatePinnedToCore(
+    OLED,
+    "OLED",
+    2000,
+    NULL,
+    1,
+    NULL,
+    1
+  );
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  if (WiFi.waitForConnectResult() != WL_CONNECTED) {
+      Serial.printf("WiFi Failed!\n");
+      return;
+  }
+
+  // Route for root / web page
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/html", index_html, processor);
+  });
+  // Send a GET request to <ESP_IP>/floor?floor=<floor>
+  server.on("/floor", HTTP_GET, 
+    [](AsyncWebServerRequest *request) {
+      String floor; 
+      
+      int flor;   
+      if (request->hasParam(PARAM_FLOOR) ) {
+        floor = request->getParam(PARAM_FLOOR)->value();
+
+        if (floor.startsWith("1")  || floor.startsWith("2")  || floor.startsWith("3") ){
+          if (floor.startsWith("1")){
+            flor = 1;
+          } else if (floor.startsWith("2")){
+            flor = 2;            
+          } else if (floor.startsWith("3")){
+            flor = 3;          
+          }
+          floor.remove(0,2);
+          date = floor;
+          goToFloor(flor);
+        } else if (floor.startsWith("up")) {
+          floor.remove(0,3);
+          date = floor;
+          if (currentFloor < 3 && !moving){
+            h_prevf = currentFloor;
+            currentFloor++;
+            if(currentFloor > 3) currentFloor = 3;
+            floorCount = 1;
+            up = true;
+            down = !up;
+            moving = true;
+            preferences.putInt("num",currentFloor);
+            h_currf = currentFloor;
+          }
+        } else if (floor.startsWith("down")) {
+          floor.remove(0,5);
+          date = floor;
+          if (currentFloor > 1 && !moving){
+            h_prevf = currentFloor;
+            currentFloor--;
+            floorCount = 1;
+            down = true;
+            up = !down;
+            moving = true;
+            preferences.putInt("num",currentFloor);
+            if(currentFloor < 1) currentFloor = 1;
+            h_currf = currentFloor;
+
+          }  
+        }
+        appendHistory(String(h_prevf) + " -> " + String(h_currf) +" " + date);
+        Serial.print("FloorId = ");
+        Serial.print(floor);
+        Serial.print(" CurrentFloor = ");
+        Serial.print(currentFloor);
+        Serial.print(" Date = ");
+        Serial.println(date);
+      } else {
+        floor = "No message sent";
+      }    
+      request->send(200, "text/plain", "OK");
+    }
+  );
+  // Send a GET request to <ESP_IP>/store?num=<floor>
+  server.on("/store", HTTP_GET, 
+    [](AsyncWebServerRequest *request) {
+      String num;    
+      if (request->hasParam(PARAM_NUM) ) {
+        num = request->getParam(PARAM_NUM)->value();
+        Serial.println(num);
+        preferences.putInt("num",num.toInt());
+      }
+    }
+  );
+  // Send a GET request to <ESP_IP>/store?num=<floor>
+  server.on("/history", HTTP_GET, 
+    [](AsyncWebServerRequest *request) {
+      request->send_P(200, "text/html", history_html, processor);
+    }
+  );
+  // Start server
+  server.begin();
+
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void loop() {
+  for(int i = 0; i< 3; i++)
+    m_prev[i] = m_curr[i];
+  for(int i = 0; i< 3; i++)
+    m_curr[i] = digitalRead(membranePins[i]);
+  buttonPress(
+    m_curr[0],
+    m_prev[0],
+    [](){
+      goToFloor(1);
+    }
+  );
+  buttonPress(
+    m_curr[1],
+    m_prev[1],
+    [](){
+      goToFloor(2);
+    }
+  );  
+  buttonPress(
+    m_curr[2],
+    m_prev[2],
+    [](){
+      goToFloor(3);
+    }
+  );
+  
+  for(int i = 0; i< 2; i++)
+    prev[i] = curr[i];
+  for(int i = 0; i< 2; i++)
+    curr[i] = digitalRead(buttonPins[i]);
+  buttonPress(
+    curr[0],
+    prev[0],
+    [](){
+      if (currentFloor < 3 && !moving){
+        h_prevf = currentFloor;
+        currentFloor++;
+        if(currentFloor > 3) currentFloor = 3;
+        floorCount = 1;
+        up = true;
+        down = !up;
+        moving = true;
+        preferences.putInt("num",currentFloor);
+        h_currf = currentFloor;
+        appendHistory(String(h_prevf) + " -> " + String(h_currf));
+      }
+    }
+  );
+  buttonPress(
+    curr[1],
+    prev[1],
+    [](){
+      if (currentFloor > 1 && !moving){
+        h_prevf = currentFloor;
+        currentFloor--;
+        floorCount = 1;
+        down = true;
+        up = !down;
+        moving = true;
+        preferences.putInt("num",currentFloor);
+        if(currentFloor < 1) currentFloor = 1;
+        h_currf = currentFloor;
+        appendHistory(String(h_prevf) + " -> " + String(h_currf));
+      }    
+    }
+  );
+
+  
+
+  if(moving){
+    Serial.println("Moving...");
+    digitalWrite(ledPins[0], 0);
+    digitalWrite(ledPins[1], 0);
+    digitalWrite(ledPins[2], 0);
+    if(up){
+      for(int i = 0 ; i < floorCount;i++){
+        stepper.step(ROTATE);
+      }
+    } else if (down){
+      for(int i = 0 ; i < floorCount;i++){
+        stepper.step(-ROTATE);
+      }
+    }
+    floorCount = 0;
+    moving  = down = up = false;    
+    Serial.println("Done Moving!");
+  } else {
+    if(currentFloor == 1){
+      digitalWrite(ledPins[0], 1);
+      digitalWrite(ledPins[1], 0);
+      digitalWrite(ledPins[2], 0);
+    } else if(currentFloor == 2){
+      digitalWrite(ledPins[0], 0);
+      digitalWrite(ledPins[1], 1);
+      digitalWrite(ledPins[2], 0);    
+    } else if(currentFloor == 3){
+      digitalWrite(ledPins[0], 0);
+      digitalWrite(ledPins[1], 0);
+      digitalWrite(ledPins[2], 1);    
+    }
+  }
+  delay(5);
+}

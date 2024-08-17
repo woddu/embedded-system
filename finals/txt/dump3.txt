@@ -1,0 +1,102 @@
+#include <WiFi.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <WiFiSTA.h>
+#include <Preferences.h>
+
+AsyncWebServer server(80);
+
+Preferences preferences;
+
+const char* ssid = "ELEVATOR CONTROL";
+const char* password = "elevator";
+
+const char* PARAM_MOVE = "move";
+
+
+const char index_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE HTML><html>
+<head>
+	<meta charset="utf-8">
+	<title> ELEVATOR BUTTONS </title>
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<style>
+	  * { margin: 0; padding: 0;  font-family: 'Alfa Slab One', cursive; }
+    body { display: flex; justify-content: center; background: #a8a8a8; }
+    .main { position: relative; width: 1100px; display: flex; justify-content: center; align-items: center; flex-wrap: wrap; padding: 30px; margin-top: 8px; }
+    
+	</style>
+</head>
+<body>
+  <div class="main">
+      
+  </div>
+  <script>
+    function floor(element){
+      xhr.open("GET", "/move?move=" + element.id, true);
+      xhr.send();
+      setTimeout(function(){
+        location.reload();
+      }, 125);
+    }   
+  </script>
+</body>
+</html>
+)rawliteral";
+
+// Replaces placeholder with button section in your web page
+String processor(const String& var){
+  //Serial.println(var);
+  if(var == "A"){
+    String buttons = "";
+    buttons += "<p> </p>";    
+    return buttons;
+  } else if(var == "B"){
+    String buttons = "";
+
+    return buttons;
+  } else {
+    return String();
+  }
+}
+
+void setup(){
+  // Serial port for debugging purposes
+  Serial.begin(115200);
+
+  preferences.begin("RemoteCar", false);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  if (WiFi.waitForConnectResult() != WL_CONNECTED) {
+      Serial.printf("WiFi Failed!\n");
+      return;
+  }
+
+  // Route for root / web page
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/html", index_html, processor);
+  });
+  // Send a GET request to <ESP_IP>/floor?floor=<floor>
+  server.on("/move", HTTP_GET, 
+    [](AsyncWebServerRequest *request) {
+      String move; 
+      int flor;   
+      if (request->hasParam(PARAM_MOVE) ) {
+
+      }  
+      request->send(200, "text/plain", "OK");
+    }
+  );
+
+  // Start server
+  server.begin();
+
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void loop() {
+  
+  delay(5);
+}

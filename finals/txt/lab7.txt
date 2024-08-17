@@ -1,0 +1,164 @@
+#include <ESP32Servo.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include "DHT.h"
+#include <OneWire.h>
+#include <DallasTemperature.h>
+
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
+#define SCREEN_HEIGHT 64 // OLED display height, in pixels
+
+// Declaration for an SSD1306 display connected to I2C (SDA, SCL pins)
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+const uint8_t oneWireBus = 5;  //WaterProof Probe Pin
+const int servoDialPin = 17; //Servo 1 Pin
+const int servoBlindsPin = 16; //Servo 2 Pin
+const uint8_t fanControl = 2;  //Buzzer Pin
+
+Servo servoDial; //Servo #1
+Servo servoBlinds; //Servo #2
+
+int minUs = 500;
+int maxUs = 2400;
+
+int temp, tempC, humid;
+DHT dht(23, DHT11);
+
+OneWire oneWire(oneWireBus);
+
+DallasTemperature sensors(&oneWire);
+
+void OLED(void *param){
+
+  while (1){
+    temp = dht.readTemperature();
+    humid = dht.readHumidity();
+    if (temp >= 0 && temp <= 60){
+    display.clearDisplay();
+    display.setTextWrap(true);
+    display.setTextSize(2);
+    display.setCursor(2, 4);
+    display.print(temp);
+    display.print(" ");
+    display.print((char)247);
+    display.print("C");
+    display.print("  ");
+    display.print(humid);
+    display.print(" ");
+    display.print("H");
+    display.display();
+    }
+    else{
+    display.clearDisplay();
+    display.setTextWrap(true);
+    display.setCursor(2, 4);
+    display.setTextSize(2);
+    display.println("Error");
+    display.setTextSize(1);
+    display.print(temp);
+    display.display();
+    }
+    delay(500);
+  }
+}
+
+void ServoDial(void *param){
+  int pos;
+  while(1){
+    
+    sensors.requestTemperatures();
+    tempC = int(sensors.getTempCByIndex(0));
+    
+    if (tempC > 25 && tempC < 65){
+    pos = map(tempC, 25, 65, 180, 0);     // scale it to use it with the servo (value between 0 and 180)
+    
+    servoDial.write(pos);                  // set the servo position according to the scaled value
+    delay(2);
+    } else {
+    servoDial.write(0);
+    }
+  }
+}
+
+void ServoBlinds(void *param){
+  while (1){
+    if (tempC > 36){
+      servoBlinds.write(0);
+      
+        digitalWrite(fanControl, HIGH);
+      
+    } else {
+      servoBlinds.write(110);
+      digitalWrite(fanControl, LOW);
+      
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(fanControl, OUTPUT);
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Address 0x3D for 128x64
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;);
+  }
+    sensors.begin();
+
+  // initialize the display
+  // note you may have to change the address
+  // the most common are 0X3C and 0X3D
+
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  // if you distribute your code, the adafruit license requires you show their splash screen
+  // otherwise clear the video buffer memory then display
+  display.display();
+  //delay(2000);
+  display.setRotation(0);
+  display.clearDisplay();
+  display.display();
+    display.setTextColor(SSD1306_WHITE);
+  // establish whatever pin reads you need
+
+  servoDial.setPeriodHertz(50);
+  servoBlinds.setPeriodHertz(50);
+  servoDial.attach(servoDialPin, minUs, maxUs);
+  servoBlinds.attach(servoBlindsPin, minUs, maxUs);
+  
+   xTaskCreatePinnedToCore(
+    OLED,
+    "OLED display",
+    5000,
+    NULL,
+    1,
+    NULL,
+    0
+  );
+  xTaskCreatePinnedToCore(
+    ServoDial,
+    "Servo Dial",
+    5000,
+    NULL,
+    1,
+    NULL,
+    1
+  );
+  xTaskCreatePinnedToCore(
+    ServoBlinds,
+    "Servo Blinds",
+    5000,
+    NULL,
+    1,
+    NULL,
+    1
+  );
+}
+
+
+
+void loop(void) {
+
+
+  }

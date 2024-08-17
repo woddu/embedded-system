@@ -1,0 +1,518 @@
+#include <esp_now.h>
+#include <WiFi.h>
+
+//Data Communication
+struct channel{
+  int channelnum;
+  int channelstate;
+};
+
+channel channels[] = {{1,0}, {2,0}, {3,0}, {4,0}, {5,0},{6,0},{7,0},{8,0},{9,0},{10,0},{11,0}, {12,0}, {13,0}, {14,0}, {15,0},{16,0}};
+
+//Timers
+static const TickType_t timeDelay = 10 / portTICK_PERIOD_MS;
+static const TickType_t shotClockSecDelay = 100 / portTICK_PERIOD_MS;
+static TimerHandle_t timeCountDown = NULL;
+static TimerHandle_t shotClockCountDown = NULL;
+
+/*
+  ScoreBoard variables
+*/
+int _time[] = {12, 0, 0};
+const int minute = 0;
+const int seconds = 1;
+const int mili = 2;
+int timeTemp;
+int timeDigit[4];
+bool playTime = false;
+int shotClock = 240;
+int shotClockTemp;
+int shotClockDigit[3];
+bool playShotClock = false;
+bool add = true;
+int tm1Score = 0;
+int tm1Foul = 0;
+int tm2Score = 0;
+int tm2Foul = 0;
+int tm1STemp,tm2STemp,tm1SDigit[3],tm2SDigit[3];
+/*
+  Shift Registers Varatibles and Functions
+  9 Input pins
+*/
+struct hc595{uint8_t data;  uint8_t latch; uint8_t clock;};
+hc595 srShotClock = {26, 15, 14};
+hc595 srTime = {26, 15, 14};
+hc595 srScores = {26, 15, 14};
+//Shift Register to 7 Segment
+int digit[] = {
+  B01111110,B00110000,B01101101,B1111001,B00110011,B01011011,B01011111,B01110000,B01111111,B01111011
+};
+int digitdecimal[] = {
+  B11111110,B10110000,B11101101,B1111001,B10110011,B11011011,B11011111,B11110000,B11111111,B11111011
+};
+// 32 outputs
+void latchTime(int thousands, int hundreds, int tens, int ones){
+  digitalWrite(srTime.data, LOW);
+  for (int i = 0; i < 4; i++){
+    for (int j = 0; j < 7; j++){
+      switch (i){
+        case 0:
+          if (bitRead(digit[ones], j) == 1){
+            digitalWrite(srTime.data, HIGH);
+          } else {
+            digitalWrite(srTime.data, LOW);
+          }
+          break;
+        case 1:
+          if (bitRead(digit[tens], j) == 1){
+            digitalWrite(srTime.data, HIGH);
+          } else {
+            digitalWrite(srTime.data, LOW);
+          }
+          break;
+        case 2:
+          if (bitRead(digit[hundreds], j) == 1){
+            digitalWrite(srTime.data, HIGH);
+          } else {
+            digitalWrite(srTime.data, LOW);
+          }
+          break;
+        case 3:
+          if (thousands > 0){
+            if (bitRead(digit[thousands], j) == 1){
+              digitalWrite(srTime.data, HIGH);
+            } else {
+              digitalWrite(srTime.data, LOW);
+            }
+          } else if (thousands == 0){
+            digitalWrite(srTime.data, LOW);
+          }
+          break;
+        default:
+          break;
+      }
+      digitalWrite(srTime.clock, HIGH);
+      digitalWrite(srTime.clock, LOW);
+    }
+  }
+    digitalWrite(srTime.data, HIGH);
+    digitalWrite(srTime.clock, HIGH);
+    digitalWrite(srTime.clock, LOW);
+  for (int k = 0; k < 3;k++){
+    digitalWrite(srTime.data, LOW);
+    digitalWrite(srTime.clock, HIGH);
+    digitalWrite(srTime.clock, LOW);
+  }
+  digitalWrite(srTime.latch, HIGH);
+  digitalWrite(srTime.latch, LOW);
+}
+// 16 outputs
+void latchShotClock(int tens, int ones){
+  digitalWrite(srShotClock.data, LOW);
+  for (int i = 0; i < 8; i++){
+    if (shotClock > 99){
+      if (bitRead(digit[ones], i) == 1){
+        digitalWrite(srShotClock.data, HIGH);
+      } else {
+        digitalWrite(srShotClock.data, LOW);
+      }
+    } else {
+      if (bitRead(digitdecimal[ones], i) == 1){
+        digitalWrite(srShotClock.data, HIGH);
+      } else {
+        digitalWrite(srShotClock.data, LOW);
+      }
+    }
+    digitalWrite(srShotClock.clock, HIGH);
+    digitalWrite(srShotClock.clock, LOW);
+  }
+  for (int i = 0; i < 8; i++){
+    if (bitRead(digit[tens], i) == 1){
+      digitalWrite(srShotClock.data, HIGH);
+    } else {
+      digitalWrite(srShotClock.data, LOW);
+    }
+    digitalWrite(srShotClock.clock, HIGH);
+    digitalWrite(srShotClock.clock, LOW);
+  }
+  digitalWrite(srShotClock.latch, HIGH);
+  digitalWrite(srShotClock.latch, LOW);
+}
+// 48 outputs 
+void latchScores(int tm1tens, int tm1ones,int tm2tens, int tm2ones,int tm2foul,int tm1foul ){
+  digitalWrite(srScores.clock, LOW);
+  digitalWrite(srScores.data, LOW);
+  for (int i = 0; i < 2; i++){
+    for (int j = 0; j < 7; j++){
+      switch (i){
+        case 0:
+          if (bitRead(digit[tm2ones], j) == 1){
+            digitalWrite(srScores.data, HIGH);
+          } else {
+            digitalWrite(srScores.data, LOW);
+          }
+          break;
+        case 1:
+          if (tm2Score > 10){
+            if (bitRead(digit[tm2tens], j) == 1){
+              digitalWrite(srScores.data, HIGH);
+            } else {
+              digitalWrite(srScores.data, LOW);
+            }
+          } else if (tm2Score < 10){
+              digitalWrite(srScores.data, LOW);
+          }
+          break;
+        default:
+          break;
+      }
+      digitalWrite(srScores.clock, HIGH);
+      digitalWrite(srScores.clock, LOW);
+    }
+  }
+  if (tm2Score > 99 && tm2Score < 200){
+    for (int i = 0; i < 2;i++){
+      digitalWrite(srScores.data, HIGH);
+      digitalWrite(srScores.clock, HIGH);
+      digitalWrite(srScores.clock, LOW);
+    }
+  } else if (tm2Score > 199){
+
+  } else if (tm2Score >= 0 && tm2Score < 100){
+    for (int i = 0; i < 2;i++){
+      digitalWrite(srScores.data, LOW);
+      digitalWrite(srScores.clock, HIGH);
+      digitalWrite(srScores.clock, LOW);
+    }
+  }
+  for (int i = 0; i < 2; i++){
+    for (int j = 0; j < 7; j++){
+      switch (i){
+        case 0:
+          if (bitRead(digit[tm1ones], j) == 1){
+            digitalWrite(srScores.data, HIGH);
+          } else {
+            digitalWrite(srScores.data, LOW);
+          }
+          break;
+        case 1:
+          if (tm1Score > 10){
+            if (bitRead(digit[tm1tens], j) == 1){
+              digitalWrite(srScores.data, HIGH);
+            } else {
+              digitalWrite(srScores.data, LOW);
+            }
+          } else if (tm1Score < 10){
+              digitalWrite(srScores.data, LOW);
+          }
+          break;
+        default:
+          break;
+      }
+      digitalWrite(srScores.clock, HIGH);
+      digitalWrite(srScores.clock, LOW);
+    }
+  }
+  if (tm1Score > 99 && tm1Score < 200){
+    for (int i = 0; i < 2;i++){
+      digitalWrite(srScores.data, HIGH);
+      digitalWrite(srScores.clock, HIGH);
+      digitalWrite(srScores.clock, LOW);
+    }
+  } else if (tm1Score > 199){
+    
+  } else if (tm1Score >= 0 && tm1Score < 100){
+    for (int i = 0; i < 2;i++){
+      digitalWrite(srScores.data, LOW);
+      digitalWrite(srScores.clock, HIGH);
+      digitalWrite(srScores.clock, LOW);
+    }
+  }
+  for (int i = 0; i < 2; i++){
+    for (int j = 0; j < 7; j++){
+      switch (i){
+        case 0:
+          if (bitRead(digit[tm2foul], j) == 1){
+            digitalWrite(srScores.data, HIGH);
+          } else {
+            digitalWrite(srScores.data, LOW);
+          }
+          break;
+        case 1:
+          if (bitRead(digit[tm1foul], j) == 1){
+            digitalWrite(srScores.data, HIGH);
+          } else {
+            digitalWrite(srScores.data, LOW);
+          }
+          break;
+        default:
+          break;
+      }
+      digitalWrite(srScores.clock, HIGH);
+      digitalWrite(srScores.clock, LOW);
+    }
+  }
+  for (int i = 0; i < 2;i++){
+      digitalWrite(srScores.data, LOW);
+      digitalWrite(srScores.clock, HIGH);
+      digitalWrite(srScores.clock, LOW);
+    }
+  digitalWrite(srScores.latch, HIGH);
+  digitalWrite(srScores.latch, LOW);
+}
+
+/*
+  Turncate and Latch to Display Function
+*/
+void displayTime(){
+  if (_time[minute] != 0){
+      timeTemp = _time[seconds];
+    for (int i = 1; i >= 0; i--){
+      timeDigit[i+2] = timeTemp % 10;
+      timeTemp = timeTemp / 10;
+    }
+      timeTemp = _time[minute];
+    for (int i = 1; i >= 0; i--){
+      timeDigit[i] = timeTemp % 10;
+      timeTemp = timeTemp / 10;
+    }
+  } else {
+      timeTemp = _time[mili];
+    for (int i = 1; i >= 0; i--){
+      timeDigit[i+2] = timeTemp % 10;
+      timeTemp = timeTemp / 10;
+    }
+      timeTemp = _time[seconds];
+    for (int i = 1; i >= 0; i--){
+      timeDigit[i] = timeTemp % 10;
+      timeTemp = timeTemp / 10;
+    }
+  }
+  latchTime(timeDigit[0],timeDigit[1],timeDigit[2],timeDigit[3]);
+}
+void displayShotClock(){
+  shotClockTemp = shotClock;
+  for (int i = 2; i >= 0; i--){
+    shotClockDigit[i] = shotClockTemp % 10;
+    shotClockTemp = shotClockTemp / 10;
+  }
+  if (shotClock > 99){
+    latchShotClock(shotClockDigit[0],shotClockDigit[1]);
+  } else {
+    latchShotClock(shotClockDigit[1],shotClockDigit[2]);
+  }
+}
+void displayScores(){
+  tm2STemp = tm2Score;
+  for (int i = 2; i >= 0; i--){
+    tm2SDigit[i] = tm2STemp % 10;
+    tm2STemp = tm2STemp / 10;
+  }
+  tm1STemp = tm1Score;
+  for (int i = 2; i >= 0; i--){
+    tm1SDigit[i] = tm1STemp % 10;
+    tm1STemp = tm1STemp / 10;
+  }
+  latchScores(tm1SDigit[1],tm1SDigit[2],tm2SDigit[1],tm2SDigit[2],tm2Foul,tm1Foul);
+}
+
+// callback functions of Timers
+void ShotClock(TimerHandle_t timer){
+  bool stop = false;
+  shotClock--;
+  if (shotClock < 0){ 
+    shotClock = 240;
+    stop = true;
+  }
+  displayShotClock();
+  if (stop){
+    xTimerStop(shotClockCountDown,portMAX_DELAY);
+  }
+}
+void _Time(TimerHandle_t timer){
+  bool stop = false;
+  _time[mili]--;
+  if (_time[mili] < 0) {
+    _time[mili] = 99;
+    _time[seconds]--;
+    if (_time[seconds] < 0){
+      _time[seconds] = 59;
+      _time[minute]--;
+      if (_time[minute] < 0){
+        _time[minute] = 0;
+        _time[seconds] = 0;
+        _time[mili] = 0;
+        stop = true;
+      }
+    }
+  }
+  displayTime();
+  if (stop){
+    xTimerStop(timeCountDown,portMAX_DELAY);
+  }
+}
+
+void changeScores(int val, int team){
+  switch (val)
+  {
+  case 1:
+    if (team == 1)
+      tm1Score = (add ? tm1Score++:tm1Score--);
+    else  
+      tm2Score = (add ? tm2Score++:tm2Score--);
+    break;
+  case 2:
+    if (team == 1)
+      tm1Score = (add ? tm1Score+2:tm1Score-2);
+    else  
+      tm2Score = (add ? tm2Score+2:tm2Score-2);
+    break;
+  case 3:
+    if (team == 1)
+      tm1Score = (add ? tm1Score+3:tm1Score-3);
+    else  
+      tm2Score = (add ? tm2Score+3:tm2Score-3);
+    break;
+  default:
+    break;
+  }
+  displayScores();
+}
+
+// callback function that will be executed when data is received
+void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
+  int channelnum;
+  memcpy(&channelnum, incomingData, sizeof(int));
+  switch (channelnum){
+    case 1: // reset 24
+      memcpy(&channels[0], incomingData, sizeof(channels[0]));
+      if (channels[0].channelstate == 1){
+        shotClock = 240;
+      }
+      break;
+    case 2: // play/pause
+      memcpy(&channels[1], incomingData, sizeof(channels[1]));
+      if (channels[1].channelstate == 1){
+        xTimerStart(shotClockCountDown, portMAX_DELAY);
+      } else {
+        xTimerStop(shotClockCountDown, portMAX_DELAY);
+      }
+      break;
+    case 3: // reset 14
+      memcpy(&channels[2], incomingData, sizeof(channels[2]));
+      if (channels[2].channelstate == 1){
+        shotClock = 140;
+      }
+      break;
+    case 4: // play/pause time
+      memcpy(&channels[3], incomingData, sizeof(channels[3]));
+      if (channels[3].channelstate == 1){
+        xTimerStart(timeCountDown, portMAX_DELAY);
+      } else {
+        xTimerStop(timeCountDown, portMAX_DELAY);
+      }     
+      break;
+    case 5: // reset time
+      memcpy(&channels[4], incomingData, sizeof(channels[4]));
+      if (channels[4].channelstate == 1){
+        _time[minute] = 12;
+        _time[seconds] = 0;
+        _time[mili] = 0;
+      }
+      break;
+    case 6: // reset fouls
+      memcpy(&channels[5], incomingData, sizeof(channels[5]));
+      if (channels[5].channelstate == 1){
+        tm2Foul = tm1Foul = 0;
+      }      
+      break;
+    case 7: // add team 1 foul
+      memcpy(&channels[6], incomingData, sizeof(channels[6]));
+      if (channels[6].channelstate == 1){
+        tm1Foul = (tm1Foul >=5 ? tm1Foul = 5 : tm1Foul++);
+      }    
+      break;    
+    case 8: // add team 2 foul
+      memcpy(&channels[7], incomingData, sizeof(channels[7]));
+      if (channels[7].channelstate == 1){
+      tm2Foul = (tm2Foul >=5 ? tm2Foul = 5 : tm2Foul++);        
+      }
+    case 9: // Score invert add or minus
+      memcpy(&channels[8], incomingData, sizeof(channels[8]));
+      add = (channels[8].channelstate == 1 ? add = true : add = false);
+      if (channels[8].channelstate == 2)
+        tm1Score = tm2Score= 0;
+      break;
+    case 10: // team1 add/minus 1
+      memcpy(&channels[9], incomingData, sizeof(channels[9]));
+      if (channels[9].channelstate == 1){
+        changeScores(1,1);
+      }      
+      break;
+    case 11: // team1 add/minus 2
+      memcpy(&channels[10], incomingData, sizeof(channels[10]));
+      if (channels[10].channelstate == 1){
+        changeScores(2,1);
+      }      
+      break;
+    case 12: // team1 add/minus 3
+      memcpy(&channels[11], incomingData, sizeof(channels[11]));
+      if (channels[11].channelstate == 1){
+        changeScores(3,1);
+      }
+      break;
+    case 13: // team 2 add/minus 1
+      memcpy(&channels[12], incomingData, sizeof(channels[12]));
+      if (channels[12].channelstate == 1){
+        changeScores(1,2);
+      }
+      break;
+    case 14: // team 2 add/minus 2
+      memcpy(&channels[13], incomingData, sizeof(channels[13]));
+      if (channels[13].channelstate == 1){
+        changeScores(2,2);
+      }      
+      break;
+    case 15: // team 2 add/minus 3
+      memcpy(&channels[14], incomingData, sizeof(channels[14]));
+      if (channels[14].channelstate == 1){
+        changeScores(3,2);
+      }
+      break;
+    case 16:
+      memcpy(&channels[15], incomingData, sizeof(channels[15]));
+      if (channels[15].channelstate == 1){
+
+      }      
+      break;
+    default:      
+      break;
+  }
+  /*
+    Call Display Functions Here
+  */
+}
+
+void setup() {
+  // Initialize Serial Monitor
+  Serial.begin(115200);
+  timeCountDown = xTimerCreate("Sleep Timer",timeDelay,pdTRUE,(void*)0,_Time);
+  shotClockCountDown = xTimerCreate("Sleep Timer",shotClockSecDelay,pdTRUE,(void*)1,ShotClock);
+
+  // Set device as a Wi-Fi Station
+  WiFi.mode(WIFI_STA);
+  // Init ESP-NOW
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("Error initializing ESP-NOW");
+    return;
+  }
+  // Once ESPNow is successfully Init, we will register for recv CB to
+  // get recv packer info
+  esp_now_register_recv_cb(OnDataRecv);
+  vTaskDelay(750 / portTICK_PERIOD_MS);
+  Serial.print("MAC: "); Serial.println(WiFi.macAddress());
+}
+ 
+void loop() {
+
+}
