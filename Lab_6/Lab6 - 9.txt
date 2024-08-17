@@ -1,0 +1,770 @@
+#include <Adafruit_GFX.h>    
+#include <Adafruit_ST7735.h> 
+#include <SPI.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
+#include "DHT.h"
+#include <ESP32Servo.h>
+
+#define TFT_RST 4
+#define TFT_DC  2
+#define TFT_CS  15
+
+#define SOUND_SPEED 0.034
+
+#define BACKCOLOR 0x18E3
+#define SCALECOLOR 0xFFFF
+
+long duration; //Duration in Ultrasonice
+double distanceCm;  //Calculated distanceof Ultrasonic in Cm
+double bottomDistance; // Distance of the bottom of the container from the Ultrasonic 
+const uint8_t trigger = 21; //Ultrasonic Trigger Pin
+const uint8_t echo = 19; //Ultrasonic Echo Pin
+const uint8_t oneWireBus = 5;  //WaterProof Probe Pin
+const int servo1Pin = 14; //Servo 1 Pin
+const int servo2Pin = 16; //Servo 2 Pin
+const uint8_t BlueLED = 33; //Blue LED Pin
+const uint8_t PurpleLED = 25; //Red LED Pin
+const uint8_t WhiteLED = 26;  //White LED Pin
+const uint8_t buzzer = 17;  //Buzzer Pin
+const uint8_t fadeLED = 12;
+ 
+Servo servo1; //Servo #1
+Servo servo2; //Servo #2
+
+Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS,  TFT_DC, TFT_RST);  //Tft display
+
+
+OneWire oneWire(oneWireBus);
+
+DallasTemperature sensors(&oneWire);
+
+int tempC;
+
+  const int numReadings = 10;
+  double dreadings[numReadings];  // the readings from the ultrasonic
+  int dreadIndex = 0;          // the index of the current d reading
+  double dtotal = 0;              // the d running total
+  double daverage = 0;            // the d average
+
+int minUs = 500;
+int maxUs = 2400;
+int pos1;
+int pos2;
+
+int LastPercent = 0;  
+
+// Global variables
+  int valueBlock[500];
+  int timeBlock[500];
+  int locationBlock[500];
+  int valuePos;
+  int blockPos;
+  int temp, humid;
+  bool error;
+  int warninglevel = 0; // If the water level is above 75%
+  bool getDistance = true;
+  bool slowprint;
+
+  DHT dht(22, DHT11);
+  
+// Editable Variables
+
+  uint16_t graphColor = ST77XX_BLUE;
+  uint16_t pointColor = ST77XX_BLACK;
+  uint16_t lineColor = ST77XX_GREEN;
+
+  int graphRange = 50;
+  int markSize = 3;
+  
+// Calculate Values
+  const int numberOfMarks = 5;
+  const int originX = 83;
+  const int originY = 100;
+  const int sizeX = 75;
+  const int sizeY = 75;
+  const int deviation = 15;
+  
+  int boxSize = (sizeX / numberOfMarks);
+  int mark[] = {(boxSize + deviation), ((boxSize * 2) + deviation), ((boxSize * 3) + deviation), ((boxSize * 4) + deviation), ((boxSize * 5) + deviation), ((boxSize * 6) + deviation), ((boxSize * 7) + deviation), ((boxSize * 8) + deviation)};
+
+  const int minorSizeY = (originY + 10);
+  const int minorSizeX = (originX - 10);
+
+  int numberSize = (sizeY / 6);
+  int number[] = {numberSize, (numberSize * 2), (numberSize * 3), (numberSize * 4), (numberSize * 5), (numberSize * 6)};
+
+  int numberValue = (graphRange / 6);
+  int val[] = {graphRange, (numberValue * 5), (numberValue * 4), (numberValue * 3), (numberValue * 2), numberValue};
+
+void IRAM_ATTR isr(){
+  getDistance = true;
+}
+
+void drawGraph()
+{
+  // draw title
+  tft.fillRect(75, 3, 82, 18, ST77XX_BLUE); // set the cursor
+  tft.fillRect(92, 4, 32, 16, ST77XX_WHITE);
+  tft.fillRect(149, 4, 7, 16, ST77XX_WHITE);
+  tft.setCursor(150, 5);
+  tft.setTextColor(ST77XX_BLUE); // set the colour of the text
+  tft.setTextSize(1); // set the size of the text
+  tft.print("H");
+  tft.setCursor(101, 5);
+  tft.setTextColor(ST77XX_BLUE); // set the colour of the text
+  tft.setTextSize(2); // set the size of the text
+  tft.print((char)247);
+  tft.print("C");
+  // draw outline
+  tft.drawLine(originX, originY, (originX + sizeX), originY, graphColor);
+  tft.drawLine(originX, originY, originX, (originY - sizeY), graphColor);
+
+  // draw lables
+  for(int i = 0; i < numberOfMarks; i++)
+  {
+    tft.drawLine(mark[i]+55, originY, mark[i]+55, minorSizeY, graphColor);
+  }
+
+  // draw numbers
+  for(int i = 0; i < 6; i++)
+  {
+    tft.drawLine(originX-1, (originY - number[i]), minorSizeX+8, (originY - number[i]), graphColor);
+  }
+  int timeRange = 10;
+  int adjustpixel = 0;
+  for(int i = 0; i <= 4; i++)
+    {
+      tft.setCursor((mark[(4 - i)] - 5)+55 +adjustpixel, (originY + 16));
+      tft.setTextColor(graphColor, ST77XX_WHITE);
+      tft.setTextSize(1);
+      tft.println(timeRange);
+      timeRange-=2;
+      adjustpixel = 3;
+      
+    }
+
+  // draw number values
+  for(int i = 0; i < 6; i++)
+  {
+    tft.setCursor((minorSizeX - 30)+28, (number[i] + numberSize));
+    tft.setTextColor(graphColor);
+    tft.setTextSize(1);
+    tft.println(val[i]);
+  }
+}
+
+void graph()
+{
+  sensors.requestTemperatures();
+  tempC = int(sensors.getTempCByIndex(0));
+  temp = dht.readTemperature();
+  humid = dht.readHumidity();
+  //Serial.println(tempC);
+  
+  if ((temp <= 50 && temp >= 0)){
+    tft.fillRect(75, 3, 25, 18, ST77XX_BLUE);
+    
+  tft.setCursor(77, 5);
+  tft.setTextColor(ST77XX_WHITE); // set the colour of the text
+  tft.setTextSize(2); // set the size of the text
+  tft.println(temp);
+  }else{
+  
+  }
+  if (humid < 99){
+    tft.fillRect(124, 3, 25, 18, ST77XX_BLUE);
+  
+  tft.setCursor(126, 5);
+  tft.setTextColor(ST77XX_WHITE); // set the colour of the text
+  tft.setTextSize(2); // set the size of the text
+  tft.println(humid);
+  }else{
+  
+  }
+  
+  if(slowprint){
+    vTaskDelay(100/ portTICK_PERIOD_MS);
+  }else
+  {if ((tempC >50 || tempC < 0)){
+  tft.fillRect((originX + 2), (originY - sizeY), sizeX, sizeY, ST77XX_WHITE);
+  tft.setTextWrap(false);
+  tft.setCursor((originX+20), (originY -50));
+  tft.setTextColor(ST77XX_BLACK);
+  tft.setTextSize(2);
+  tft.print("Too");
+  tft.setCursor((originX+16), (originY -34));
+  tft.print("High");
+  error = true;
+  }else{
+  
+  timeBlock[valuePos] = ((millis() - 4500) / 1000);
+
+  valueBlock[valuePos] = tempC;
+  if (error){
+    tft.fillRect((originX + 2), (originY - sizeY), sizeX, sizeY, ST77XX_WHITE);
+    tft.setTextWrap(true);
+    error = false;
+  }
+
+  
+  if(blockPos < 5)
+  {
+    // print the time
+    //tft.setCursor((mark[valuePos] - 5)+56, (originY + 16));
+    //tft.setTextColor(graphColor, ST77XX_WHITE);
+    //tft.setTextSize(1);
+    //tft.println(timeBlock[valuePos]);
+    
+    // map the value
+    locationBlock[valuePos] = map(tempC, 0, graphRange, originY, (originY - sizeY));
+
+    // draw point
+    tft.fillRect((mark[valuePos] - 1)+56, (locationBlock[valuePos] - 1), markSize, markSize, pointColor);
+
+    // try connecting to previous point
+    if(valuePos != 0)
+    {
+      tft.drawLine(mark[valuePos]+56, locationBlock[valuePos], mark[(valuePos - 1)]+56, locationBlock[(valuePos - 1)], lineColor);
+    }
+
+    blockPos++;
+  }
+  else
+  {
+    // clear the graph's canvas
+    tft.fillRect((originX + 1), (originY - sizeY), sizeX, sizeY, ST77XX_WHITE);
+
+    // map the value - current point
+    locationBlock[valuePos] = map(tempC, 0, graphRange, originY, (originY - sizeY));
+
+    // draw point - current point
+    tft.fillRect((mark[4])+56, (locationBlock[valuePos] - 1), markSize, markSize, pointColor);
+
+    // draw all points
+    for(int i = 0; i < 5; i++)
+    {
+      tft.fillRect((mark[(blockPos - (i + 1))] - 1)+56, (locationBlock[(valuePos - i)] - 1), markSize, markSize, pointColor);
+    }
+
+    // draw all the lines
+    for(int i = 0; i < 4; i++)
+    {
+      tft.drawLine(mark[blockPos - (i + 1)]+56, locationBlock[valuePos - i], mark[blockPos - (i + 2)]+56, locationBlock[valuePos - (i + 1)], lineColor);
+    }
+    
+    // change time lables
+    //for(int i = 0; i <= 4; i++)
+    //{
+    //  tft.setCursor((mark[(4 - i)] - 5)+54, (originY + 16));
+    //  tft.setTextColor(graphColor, ST77XX_WHITE);
+    //  tft.setTextSize(1);
+    //  tft.println(timeBlock[valuePos - i]);
+    //}
+  }
+
+  valuePos++;}}
+}
+
+void TFTPrint(uint16_t x, uint16_t y, uint8_t size,uint16_t color , String print){
+  tft.setCursor(x, y);
+  tft.setTextSize(size);
+  tft.setTextColor(color);
+  tft.print(print);
+}
+
+void TFTPrint(uint16_t x, uint16_t y, uint8_t size,uint16_t color , int print){
+  tft.setCursor(x, y);
+  tft.setTextSize(size);
+  tft.setTextColor(color);
+  tft.print(print);
+}
+
+void TFTSlowPrint(uint16_t x, uint16_t y, uint8_t size,uint16_t color , String print, int Delay){
+  slowprint = true;
+  tft.setCursor(x, y);
+  tft.setTextSize(size);
+  tft.setTextColor(color);
+  for (int i = 0; i<print.length(); i++){
+    char c = print.charAt(i);
+    tft.print(c);
+    vTaskDelay(Delay / portTICK_PERIOD_MS);
+  }
+  slowprint = false;
+}
+
+void drawScale(int adjustX){  
+  tft.fillRect(0, 0, 70, 128, BACKCOLOR);
+  tft.fillRoundRect(1,2,68,13,3, ST77XX_YELLOW);
+  tft.drawRoundRect(1, 2, 68, 13, 3, ST77XX_MAGENTA);
+  TFTPrint(3,5,1,ST77XX_BLACK,"Water Level");
+  tft.drawFastVLine((55 + adjustX), 26,24, ST77XX_RED); // Vertical Scale Line  
+  tft.drawFastVLine((55 + adjustX), 50,26, ST77XX_ORANGE);
+  tft.drawFastVLine((55 + adjustX), 76,50, ST77XX_GREEN);
+
+  tft.drawFastHLine((47 + adjustX), 26, 8, ST77XX_RED); // Major Division
+  TFTPrint(0,18,1,ST77XX_RED,"100");
+  TFTPrint(19,18,1,ST77XX_RED,"%");
+  tft.drawFastHLine((50 + adjustX), 50, 5, ST77XX_ORANGE); // Minor Division
+  TFTPrint(0,42,1,ST77XX_ORANGE,"75");
+  TFTPrint(14,42,1,ST77XX_ORANGE,"%");
+  tft.drawFastHLine((47 + adjustX), 75, 8, ST77XX_ORANGE); // Major Division
+  TFTPrint(0,67,1,ST77XX_ORANGE,"50");
+  TFTPrint(14,67,1,ST77XX_ORANGE,"%");
+  tft.drawFastHLine((50 + adjustX), 100, 5, ST77XX_GREEN); // Minor Division
+  TFTPrint(0,92,1,ST77XX_GREEN,"25");
+  TFTPrint(14,92,1,ST77XX_GREEN,"%");
+  tft.drawFastHLine((47 + adjustX), 125, 8, ST77XX_GREEN);  // Major Division
+  TFTPrint(0,117,1,ST77XX_GREEN,"0");
+  TFTPrint(8,117,1,ST77XX_GREEN,"%");
+}
+
+void UDSGetDistance(){
+  digitalWrite(trigger, LOW);
+  delayMicroseconds(2);
+  // Sets the trigPin on HIGH state for 10 micro seconds
+  digitalWrite(trigger, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigger, LOW);
+  
+  // Reads the echoPin, returns the sound wave travel time in microseconds
+  duration = pulseIn(echo, HIGH);
+  
+  // Calculate the distance
+  distanceCm = duration * SOUND_SPEED/2;
+}
+
+void drawBar (int adjustX,int nPer){
+  
+  
+  if(nPer < LastPercent){
+    tft.fillRect((61 + adjustX), 26 + (100-LastPercent), 20, LastPercent - nPer,  BACKCOLOR);     
+  }
+  else{
+    tft.fillRect((61 + adjustX), 26 + (100-nPer), 20, nPer - LastPercent,  ST77XX_CYAN);
+  }    
+  LastPercent = nPer;  
+  
+}
+
+void Getaverage(){
+  vTaskDelay(50 / portTICK_PERIOD_MS);
+  warninglevel = 0;
+  double readings[numReadings];  // the readings from the analog input
+  int readIndex = 0;          // the index of the current reading
+  double total = 0;              // the running total
+  double average = 0;            // the average
+  tft.fillRect(0, 0, 70, 128, BACKCOLOR);
+  TFTSlowPrint(0,18,1,ST77XX_WHITE,"Getting\nBottom \nDistance in:", 40);
+  for (int i = 3; i > 0; i--){
+    tft.fillRect(0, 43, 70, 25, BACKCOLOR);
+    tft.setCursor(32, 45);
+    tft.setTextSize(1);
+    tft.setTextColor(ST77XX_WHITE);
+    tft.print(i);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
+  tft.fillRect(0, 0, 70, 128, BACKCOLOR);
+  TFTSlowPrint(0,18,1,ST77XX_WHITE,"Don't Move\n The UDS!", 50);
+  for (int thisReading = 0; thisReading < numReadings; thisReading++) {
+    readings[thisReading] = 0;
+  }
+  for (int i = 0; i < numReadings; i++) {
+    UDSGetDistance();
+    total = total - readings[readIndex];
+    // read from the sensor:
+    readings[readIndex] = distanceCm;
+    // add the reading to the total:
+    total = total + readings[readIndex];
+    // advance to the next position in the array:
+    readIndex = readIndex + 1;
+     tft.fillRect(52, 26, 18,80,BACKCOLOR );
+      TFTPrint(52, 67, 1 , ST7735_WHITE, int(distanceCm));
+    // if we're at the end of the array...
+    if (readIndex >= numReadings) {
+    // ...wrap around to the beginning:
+    readIndex = 0;
+    }
+    vTaskDelay(200 / portTICK_PERIOD_MS);
+  }
+  // calculate the average:
+  average = total / numReadings;
+  bottomDistance = average;
+  getDistance = false;
+  for (int thisReading = 0; thisReading < numReadings; thisReading++) {
+    readings[thisReading] = 0;
+  }
+  total = 0;
+  tft.fillRect(0, 0, 70, 128, BACKCOLOR);
+  TFTSlowPrint(0,18,1,ST77XX_WHITE,"Done!\nBottom\nDistance is:", 40);
+  tft.print("\n");
+  tft.print(int(bottomDistance));
+  vTaskDelay(2000 / portTICK_PERIOD_MS);
+   drawScale(-30);
+  while (!getDistance){
+    int newPercent;
+     UDSGetDistance();
+    tft.fillRect(52, 26, 18,80,BACKCOLOR );
+    
+    newPercent = int(((bottomDistance - distanceCm)/bottomDistance)* 100.0)  ;
+    if (distanceCm < 4){
+      newPercent +=8;
+    }else if(distanceCm <2){
+      newPercent+=10;
+    }
+    tft.fillRect(52, 26, 18,80,BACKCOLOR );
+    if (distanceCm <= 999){
+      TFTPrint(52, 67, 1 , ST7735_WHITE, distanceCm);
+    }else{  
+      TFTPrint(52, 67, 1 , ST7735_WHITE, "hi");
+    }
+    if (newPercent >75 && newPercent <= 100){
+      TFTPrint(52, 42, 1 , ST7735_RED, newPercent);
+    } else if (newPercent <= 75 && newPercent >= 50)
+    {
+      TFTPrint(52, 42, 1 , ST7735_ORANGE, newPercent);
+    } else if (newPercent <50 && newPercent > 0){
+      TFTPrint(52, 42, 1 , ST7735_GREEN, newPercent);
+    }else if (newPercent <= 0){
+      TFTPrint(52, 42, 1 , ST7735_GREEN, 0);
+    }else{
+      tft.fillRect(52, 42, 18,12,ST7735_RED );
+    }
+
+    if (newPercent > 75&& newPercent <= 100 ){
+      warninglevel = 2;
+    }else if (newPercent<= 75 && newPercent >=50){
+      warninglevel = 1;
+    }else if (newPercent <50){
+      warninglevel = 0;
+    }
+    if (newPercent >60){
+      newPercent+=4;
+    } else if (newPercent > 10 && newPercent <=60)
+    {
+      newPercent+=2;
+    }
+    
+    
+    if (((newPercent != LastPercent)) && (newPercent <=100)){
+      drawBar(-30, newPercent); 
+      vTaskDelay(100 / portTICK_PERIOD_MS);  
+    }
+
+    //Serial.printf("\nlab6 - Free Stack Space: %d", uxTaskGetStackHighWaterMark(NULL));
+  }
+}
+
+void drawHome()
+{
+  tft.fillScreen(BACKCOLOR);
+  delay(500);
+  
+  TFTSlowPrint(60, 10, 2, ST7735_WHITE,"Lab", 80);
+
+  TFTSlowPrint(47, 26, 2, ST7735_WHITE,"6 - 9", 80);
+
+  vTaskDelay(250 / portTICK_PERIOD_MS);
+
+  TFTSlowPrint(2, 50, 2, ST7735_MAGENTA,"Members:" ,100);
+  
+  vTaskDelay(250 / portTICK_PERIOD_MS);
+  TFTSlowPrint(0, 66, 1, ST7735_CYAN,"  Castro\n  Manocdoc\n  Narag\n  Salih\n  Sison", 80);
+
+  delay(1500);
+
+  tft.fillScreen(ST77XX_WHITE);
+  delay(500);
+}
+
+void blueLED(void * param){
+  while (1){
+    digitalWrite(BlueLED, HIGH);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    digitalWrite(BlueLED, LOW);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
+}
+
+void purpleLED(void * param){
+  while (1){
+    digitalWrite(PurpleLED, HIGH);
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    digitalWrite(PurpleLED, LOW);
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+  }
+}
+void whiteLED(void * param){
+  while (1){
+    digitalWrite(WhiteLED, HIGH);
+    vTaskDelay(125 / portTICK_PERIOD_MS);
+    digitalWrite(WhiteLED, LOW);
+    vTaskDelay(125 / portTICK_PERIOD_MS);
+  }
+}
+
+void lab7(void *param){
+  while(1){
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+    if (!slowprint){
+    graph();
+    vTaskDelay(1990 / portTICK_PERIOD_MS);
+    } else {
+      vTaskDelay(100 / portTICK_PERIOD_MS);
+    }
+    //Serial.printf("\nLab7 - Free Stack Space: %d", uxTaskGetStackHighWaterMark(NULL));
+  }
+}
+
+void lab6(void *param){
+  while (1){
+  Getaverage();
+  
+  }
+}
+
+void servo2Knob(void *param){
+  int val;
+  while(1){
+    val = analogRead(A0);
+    val = map(val, 0, 4095, 0, 180);     // scale it to use it with the servo (value between 0 and 180)
+    servo2.write(val);                  // set the servo position according to the scaled value
+    delay(5);
+  }
+}
+
+void servo1sweep(void *param){
+  int pos;
+  while (1){
+  
+    	for (pos = 0; pos <= 180; pos += 1) { // goes from 0 degrees to 180 degrees
+		// in steps of 1 degree
+		  servo1.write(pos);    // tell servo to go to position in variable 'pos'
+      if (warninglevel == 2){
+        delay(1);
+      }else if(warninglevel == 1){
+        delay(4);
+      }
+		  else{
+        delay(10);
+      }             // waits 15ms for the servo to reach the position
+	  }
+	  for (pos = 180; pos >= 0; pos -= 1) { // goes from 180 degrees to 0 degrees
+	  	servo1.write(pos);    // tell servo to go to position in variable 'pos'
+      if (warninglevel ==2){
+        delay(1);
+      }else if(warninglevel == 1){
+        delay(4);
+      }
+	  	else{delay(10);}             // waits 15ms for the servo to reach the position
+	  }
+  }
+}
+
+void buzzerloop(void *param){
+  while (1){
+    if (warninglevel== 2){
+              for (int fadeValue = 0; fadeValue <= 255; fadeValue += 10) {
+      // sets the value (range from 0 to 255):
+      analogWrite(buzzer, fadeValue);
+      // wait for 30 milliseconds to see the dimming effect
+      delay(2);
+    }
+    delay(15);
+    // fade out from max to min in increments of 5 points:
+    for (int fadeValue = 255; fadeValue >= 0; fadeValue -= 10) {
+      // sets the value (range from 0 to 255):
+      analogWrite(buzzer, fadeValue);
+      // wait for 30 milliseconds to see the dimming effect
+      delay(2);
+    }
+    }else if(warninglevel == 1){
+      for (int fadeValue = 0; fadeValue <= 255; fadeValue += 10) {
+      // sets the value (range from 0 to 255):
+      analogWrite(buzzer, fadeValue);
+      // wait for 30 milliseconds to see the dimming effect
+      delay(6);
+    }
+    delay(30);
+    // fade out from max to min in increments of 5 points:
+      for (int fadeValue = 255; fadeValue >= 0; fadeValue -= 10) {
+      // sets the value (range from 0 to 255):
+      analogWrite(buzzer, fadeValue);
+      // wait for 30 milliseconds to see the dimming effect
+      delay(6);
+    }
+      }else {
+        for (int fadeValue = 0; fadeValue <= 250; fadeValue += 5) {
+      // sets the value (range from 0 to 255):
+      analogWrite(buzzer, fadeValue);
+      // wait for 30 milliseconds to see the dimming effect
+       if (warninglevel == 2){
+        delay(2);
+      }else if(warninglevel == 1){
+      delay(6);
+      }
+		  else{delay(30);} 
+    }
+    // fade out from max to min in increments of 5 points:
+    for (int fadeValue = 250; fadeValue >= 0; fadeValue -= 5) {
+      // sets the value (range from 0 to 255):
+      analogWrite(buzzer, fadeValue);
+      // wait for 30 milliseconds to see the dimming effect
+       if (warninglevel==2){
+        delay(2);
+      }else if(warninglevel == 1){
+        delay(6);
+      }
+		  else{delay(30);} 
+    }
+    }
+  }
+}
+
+void FadeLED(void *param){
+  while (1){
+     for (int fadeValue = 0; fadeValue <= 255; fadeValue += 5) {
+    // sets the value (range from 0 to 255):
+    analogWrite(fadeLED, fadeValue);
+    // wait for 30 milliseconds to see the dimming effect
+    delay(30);
+  }
+  delay(125);
+  // fade out from max to min in increments of 5 points:
+  for (int fadeValue = 255; fadeValue >= 0; fadeValue -= 5) {
+    // sets the value (range from 0 to 255):
+    analogWrite(fadeLED, fadeValue);
+    // wait for 30 milliseconds to see the dimming effect
+    delay(30);
+  }
+  }
+}
+
+void setup(void) {
+  Serial.begin(115200);
+  tft.initR(INITR_BLACKTAB);  
+  pinMode(echo, INPUT);
+  pinMode(0, INPUT_PULLUP);
+
+  pinMode(trigger, OUTPUT);
+  pinMode(BlueLED, OUTPUT);
+  pinMode(PurpleLED, OUTPUT);
+  pinMode(WhiteLED, OUTPUT);
+  pinMode(fadeLED, OUTPUT);
+  sensors.begin();
+
+  attachInterrupt(0,isr,FALLING);
+
+  servo1.setPeriodHertz(50);
+  servo2.setPeriodHertz(50);
+  servo1.attach(servo1Pin, minUs, maxUs);
+  servo2.attach(servo2Pin, minUs, maxUs);
+
+  delay(500);
+ 
+  tft.setRotation(1);
+
+  xTaskCreatePinnedToCore(
+    servo2Knob,
+    "Servo 2 Knob",
+    5000,
+    NULL,
+    1,
+    NULL,
+    1
+  );
+
+   xTaskCreatePinnedToCore(
+    servo1sweep,
+    "Servo 1 Sweep",
+    5000,
+    NULL,
+    1,
+    NULL,
+    0
+  );
+
+  xTaskCreatePinnedToCore(
+    blueLED,
+    "Blue LED",
+    2000,
+    NULL,
+    2,
+    NULL,
+    0
+  );
+  xTaskCreatePinnedToCore(
+    purpleLED,
+    "Purple LED",
+    2000,
+    NULL,
+    2,
+    NULL,
+    0
+  );
+  xTaskCreatePinnedToCore(
+    whiteLED,
+    "White LED",
+    2000,
+    NULL,
+    2,
+    NULL,
+    0
+  );
+  xTaskCreatePinnedToCore(
+    FadeLED,
+    "Fade LED",
+    2000,
+    NULL,
+    2,
+    NULL,
+    0
+  );
+  xTaskCreatePinnedToCore(
+    buzzerloop,
+    "buzzer beep",
+    2000,
+    NULL,
+    2,
+    NULL,
+    0
+  );
+
+  drawHome();
+  drawGraph();
+
+  xTaskCreatePinnedToCore(
+    lab7,
+    "Lab 7",
+    5000,
+    NULL,
+    1,
+    NULL,
+    1
+  );
+  
+  xTaskCreatePinnedToCore(
+    lab6,
+    "Lab 6",
+    5000,
+    NULL,
+    2,
+    NULL,
+    1
+  );
+
+}
+
+void loop() {  
+    //int newPercent;
+    //RawValue = analogRead(analogIn);
+    //newPercent = int((RawValue/4095.0)* 100.0);
+    //
+    //if (newPercent != LastPercent){
+    //  drawBar(-30, newPercent); 
+    //  delay(50);    
+    //}
+    //graph();
+    //delay(2000); 
+}
+  

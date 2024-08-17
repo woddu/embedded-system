@@ -1,0 +1,68 @@
+#include <Adafruit_GFX.h>   
+#include <Adafruit_SSD1306.h>
+#include <Wire.h>
+#include "DHT.h"
+#include <ESP32Servo.h>
+
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
+#define SCREEN_HEIGHT 64 // OLED display height, in pixels
+
+// Declaration for SSD1306 display connected using I2C
+#define OLED_RESET     -1 // Reset pin
+#define SCREEN_ADDRESS 0x3C
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+Servo servoTemp; //Servo #1
+Servo servoHumid; //Servo #2
+
+int tempC;
+
+int posTemp;
+int posHumid;
+int temp, humid;
+DHT dht(22, DHT11);
+
+void setup(void) {
+
+if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Address 0x3D for 128x64
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;);
+  }
+  display.display();
+  display.clearDisplay();
+  
+  dht.begin();
+  servoTemp.setPeriodHertz(50);// Standard 50hz servo
+  servoTemp.attach(16, 500, 2400);
+  servoHumid.setPeriodHertz(50);// Standard 50hz servo
+  servoHumid.attach(17, 500, 2400);
+  setTextColor(SSD1306_WHITE, SSD1306_BLACK);
+  
+}
+
+void loop() {  
+	temp = dht.readTemperature();
+    humid = dht.readHumidity();
+	posTemp = map(temp, 20,60,180,0);
+	posHumid = map(humid, 40,100,180,0);
+	if(isnan(temp) || isnan(humid)){
+		display.clearDisplay();
+		display.setCursor(4,8);
+		display.println("Error");
+		display.display();
+	} else {
+	servoHumid.write(posHumid);
+	servoTemp.write(posTemp);
+	display.clearDisplay();
+		display.setCursor(4,8);
+		display.print("Temp is: ");
+		display.println(temp);
+		display.print("Humid is: ");
+		display.println(humid);
+		display.display();
+	}
+	
+	
+}
+  

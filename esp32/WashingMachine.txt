@@ -1,0 +1,241 @@
+
+static TickType_t timerDuration;
+static TimerHandle_t timer = NULL;
+static TaskHandle_t h_CounterClockWise;
+static TaskHandle_t h_ClockWise;
+static TaskHandle_t h_Dryer;
+
+const int  dryer = 32, clockWise = 33, counterClockWise = 25;// Gray Wire = dyer, Green Wire = clockWise , Black Wire = counterClockWise
+
+const int button[] = {26, 27, 14, 12};
+bool prev[4], curr[4], dry, wash, drain, _pause;
+
+bool idle, isCounterClockWise; int spinCount;
+
+unsigned long t2, t1;
+
+void StartDryer(int);
+void AlternateDirection(int, bool);
+
+bool NoProgram(){
+  return !wash && !dry && !drain;
+}
+
+bool Draining(){
+  return !wash && !dry && drain;
+}
+
+bool Drying(){
+  return !wash && dry && !drain;
+}
+
+bool Washing(){
+  return wash && !dry && !drain;
+}
+
+void OFF(){
+  digitalWrite(clockWise, LOW);
+  digitalWrite(counterClockWise, LOW);
+  digitalWrite(dryer, LOW);
+}
+
+void tClockWise(TimerHandle_t timer){
+  if (idle){
+    spinCount++;
+    isCounterClockWise = false;  
+    digitalWrite(clockWise, HIGH);
+    // Serial.print(spinCount);
+    // Serial.println("Turning CounterClockWise");    
+    ((spinCount <= 6) ? AlternateDirection(1500, false) : AlternateDirection(3750, false));
+  } else {
+    OFF();
+    if (spinCount >= 172) {
+      // Serial.println("Finished");
+      spinCount = 0;
+      wash = idle = false;
+      wash = dry = drain = false;
+      xTimerStop(timer, portMAX_DELAY);
+    } else{      
+      ((spinCount <= 6) ? AlternateDirection(800, true) : AlternateDirection(1125, true));    
+      // Serial.println("Idling...");
+    }
+  }
+}
+
+void tCounterClockWise(TimerHandle_t timer){
+  if (idle){
+    spinCount++;
+    isCounterClockWise = true;  
+    digitalWrite(counterClockWise, HIGH);
+    // Serial.print(spinCount);
+    // Serial.println("Turning ClockWise");
+    (((spinCount <= 4) || (spinCount >= 168)) ? AlternateDirection(1500, false) : AlternateDirection(3750, false));    
+  } else {
+    OFF();
+    if (spinCount >= 172) {
+      // Serial.println("Finished");
+      spinCount = 0;
+      wash = idle = false;
+      wash = dry = drain = false;
+      xTimerStop(timer, portMAX_DELAY);
+    } else {      
+      (((spinCount <= 4) || (spinCount >= 168)) ? AlternateDirection(800, true) : AlternateDirection(1125, true));        
+      // Serial.println("Idling...");
+    }
+
+  }
+}
+
+void tDryer(TimerHandle_t timer){
+  
+    switch (spinCount)
+    {
+    case 0:
+      digitalWrite(clockWise, HIGH);
+      StartDryer(1500);
+      break;
+    case 1:
+      digitalWrite(clockWise, LOW);
+      vTaskDelay(1250 / portTICK_PERIOD_MS);
+      digitalWrite(clockWise, HIGH);
+      StartDryer(2125);
+      break;
+    case 2:
+      digitalWrite(clockWise, LOW);
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+      digitalWrite(clockWise, HIGH);
+      StartDryer(3000);
+      break;
+    case 3:
+      digitalWrite(clockWise, LOW);
+      vTaskDelay(800 / portTICK_PERIOD_MS);
+      digitalWrite(clockWise, HIGH);
+      StartDryer(480000);
+      break;    
+    case 4:
+      digitalWrite(clockWise, LOW);
+      vTaskDelay(2000 / portTICK_PERIOD_MS);
+      digitalWrite(dryer, LOW);
+      spinCount = 0;
+      wash = dry = drain = false;
+      xTimerStop(timer, portMAX_DELAY);
+      break;
+    default:
+      break;
+    
+    }
+  
+}
+
+void Dryer(void *param){
+  while (1){
+    while (dry){
+
+      dry = false;
+    }
+    vTaskDelay(15/portTICK_PERIOD_MS);
+  }
+}
+
+void StartDryer(int duration){
+  timerDuration = duration / portTICK_PERIOD_MS; 
+  timer = xTimerCreate("Timer", timerDuration, pdFALSE,(void*)0, tDryer);
+  t1 = millis();
+  xTimerStart(timer, portMAX_DELAY);
+  spinCount++;
+}
+
+void AlternateDirection(int duration, bool idling){
+  idle = idling;
+  timerDuration = duration / portTICK_PERIOD_MS; 
+  timer = xTimerCreate("Timer", timerDuration, pdFALSE,(void*)0, (isCounterClockWise ? tClockWise : tCounterClockWise));
+  xTimerStart(timer, portMAX_DELAY);
+}
+
+void setup() {
+  // put your setup code here, to run once:
+  // Serial.begin(115200);
+  pinMode(clockWise, OUTPUT);
+  pinMode(counterClockWise, OUTPUT);
+  pinMode(dryer, OUTPUT);
+  for(int i = 0; i < 4; i++)
+    pinMode(button[i], INPUT_PULLDOWN);
+
+  
+}
+
+void loop() {
+  // put your main code here, to run repeatedly:
+  for(int i = 0; i < 4; i++)
+    prev[i] = curr[i];
+  for(int i = 0; i < 4; i++)
+    curr[i] = digitalRead(button[i]);
+  for(int i = 0; i < 4; i++){
+    if (curr[i] == HIGH && prev[i] == LOW){
+      switch (i){
+        case 0:
+          if (NoProgram()){
+            spinCount = 0;
+            dry = true;
+            digitalWrite(dryer, HIGH);
+            StartDryer(5000);
+          }
+          break;
+        case 1:
+          if (NoProgram()){
+            spinCount = 0;          
+            wash = true;
+            AlternateDirection(1, true);
+          }
+          break;
+        case 2:          
+          if (!_pause){
+            if (Drying()){ 
+              digitalWrite(clockWise, LOW);
+              if (spinCount == 4){
+                t2 = millis();
+                t2 = t2 - t1;
+              }
+              xTimerStop(timer, portMAX_DELAY);              
+            } else if (Washing()){
+              OFF();       
+              xTimerStop(timer, portMAX_DELAY);
+            }
+            _pause = true;
+          } else {
+            if (Drying()){
+              if (spinCount < 4){
+                spinCount = 2;
+                digitalWrite(clockWise, HIGH);
+                StartDryer(2125);
+              } else if (spinCount == 4){
+                digitalWrite(clockWise, HIGH);
+                vTaskDelay(1500 / portTICK_PERIOD_MS);
+                digitalWrite(clockWise, LOW);
+                vTaskDelay(1250 / portTICK_PERIOD_MS);
+                digitalWrite(clockWise, HIGH);
+                StartDryer(480000 - t2);
+              }
+            } else if (Washing()){
+              AlternateDirection(5,true);
+            }
+            _pause = false;
+          }
+          break;
+        case 3:
+          if (NoProgram()){
+            drain = true;
+            digitalWrite(dryer, HIGH);
+          } else if (Draining()){
+            digitalWrite(dryer, LOW);
+            wash = dry = drain = false;
+          }
+          break;
+        default:
+        
+          break;
+      }
+    }
+  }
+ 
+}
